@@ -1,53 +1,90 @@
-abstract class State {
-    val transitions: MutableList<Transition<*, *>> = mutableListOf()
+import java.util.logging.Logger
 
-    data class Transition<S : State, SE: SideEffect>(val to: S, val effect: SE)
+class StateMachine<IState : Any, IEvent : Any, ISideEffect : Any> private constructor(){
+    lateinit var name: String
+    private lateinit var initialState: IState
+    private lateinit var finalState: IState
+    private lateinit var onTransition: (ISideEffect) -> Unit
+    private lateinit var currentState: IState
+    private val transitionsMap: HashMap<IState, MutableList<Transition>> = hashMapOf()
 
-    fun <E : Event> on(event: E, on: E.() -> Transition<*, *>){ transitions.add(on(event)) }
-}
+    class Transition(val on: IEvent, val to: IState, val effect: ISideEffect) {
+        class Valid(val from: IState, val on: IEvent, val to: IState, val effect: ISideEffect)
 
-abstract class Event {
-    fun <S : State, SE: SideEffect> transitTo(to: S, sd: SE) = State.Transition(to, sd)
-}
-abstract class SideEffect
-
-class StateMachine private constructor(
-    val name: String,
-    private val initialState: State,
-    private val finalState: State,
-    private val states: List<State> = listOf(),
-    private val onTransition: (SideEffect) -> Unit,
-){
-    open class New internal constructor(open val name: String) {
-        fun initialState(state: State, f: WithInitialState.() -> StateMachine) : StateMachine =
-            f(WithInitialState(name, state))
+        class Invalid(val from: IState, val on: IEvent)
     }
 
-    open class WithInitialState internal constructor(
-        override val name: String,
-        open val initialState: State,
-    ) : New(name) {
-        fun finalState(state: State, addStates: WithFinalState.() -> StateMachine): StateMachine =
-            addStates(WithFinalState(name, initialState, state))
+    open inner class New internal constructor(open val name: String) {
+        fun <S : IState> initialState(
+            state: S,
+            f: WithInitialState.() -> StateMachine<IState, IEvent, ISideEffect>
+        ): StateMachine<IState, IEvent, ISideEffect> {
+            this@StateMachine.name = name
+            initialState = state
+
+            return f(WithInitialState())
+        }
     }
 
-    open class WithFinalState internal constructor(
-        override val name: String,
-        override val initialState: State,
-        private val finalState: State,
-        private val states: MutableList<State> = mutableListOf()
-    ) : WithInitialState(name, initialState) {
-        fun <S : State> state(state: S, add: S.() -> Unit) {
-            if (!states.contains(state))
-                states.add(state)
+    open inner class WithInitialState internal constructor()
+        : New(name)
+    {
+        fun <S : IState> finalState(
+            state: S,
+            addStates: WithFinalState.() -> StateMachine<IState, IEvent, ISideEffect>
+        ): StateMachine<IState, IEvent, ISideEffect> {
+            finalState = state
 
-            add(state)
+            return addStates(WithFinalState())
+        }
+    }
+
+    open inner class WithFinalState internal constructor() : WithInitialState()
+    {
+        fun state(state: IState, builder: StateBuilder.() -> Transition) {
+            transitionsMap.getOrPut(state) { mutableListOf() }.add(builder(StateBuilder()))
         }
 
-        fun onTransition(execute: (SideEffect) -> Unit) = StateMachine(name, initialState, finalState, states, execute)
+        fun onTransition(execute: (ISideEffect) -> Unit): StateMachine<IState, IEvent, ISideEffect> {
+            onTransition = execute
+
+            return this@StateMachine
+        }
     }
 
+    inner class StateBuilder {
+        fun on(event: IEvent, builder: TransitionBuilder.() -> Transition) = builder(TransitionBuilder(event))
+    }
+
+    inner class TransitionBuilder(private val on: IEvent){
+        fun transitTo(to: IState, sd: ISideEffect) = Transition(on, to, sd)
+    }
+
+    fun fire(e: IEvent){
+        findTransition(e).also {
+
+
+            logger.info("Event ${e::class.simpleName} fired!")
+            logger.info("Starting side effect ${it.effect::class.simpleName}...")
+            onTransition(it.effect)
+            logger.info("Side effect ${it.effect::class.simpleName} finished!")
+            logger.info("Transiting to ${currentState::class.simpleName} -> ${it.to::class.simpleName}")
+            currentState = it.to
+        }
+    }
+
+    private fun findTransition(e: IEvent): Transition =
+        transitionsMap.getOrElse(currentState) { listOf() }.firstOrNull { it.on == e }?.let {
+            Transition.Valid(currentState, e, it.to, it.effect)
+        } ?: Transition.Invalid(currentState, e)
+
     companion object {
-        fun build(name: String, init: New.() -> StateMachine): StateMachine = init(New(name))
+        private const val TAG = "StateMachine"
+        private val logger = Logger.getLogger(TAG)
+
+        fun <S : Any, E : Any, SE : Any> build(
+            name: String,
+            init: StateMachine<S, E, SE>.New.() -> StateMachine<S, E, SE>
+        ) = init(New(name))
     }
 }

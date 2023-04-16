@@ -36,6 +36,10 @@ fun main(args: Array<String>) {
             finalState(MyStates.Final) {
                 state(MyStates.Initial) {
                     on(MyEvents.Event1) {
+                        execute {
+                            logger.info("I am running on state.on")
+                        }
+
                         transitTo(MyStates.State2, MySideEffects.Effect1)
                     }
                 }
@@ -46,8 +50,8 @@ fun main(args: Array<String>) {
                     }
                 }
 
-                onTransition {
-                    when(it) {
+                onTransition { _, _, _, effect: SideEffect ->
+                    when(effect) {
                         is MySideEffects.Effect1 -> { logger.info("Effect1 execution") }
                         is MySideEffects.Effect2 -> { logger.info("Effect2 execution") }
                         is MySideEffects.Effect3 -> { logger.info("Effect3 execution") }
@@ -59,5 +63,5 @@ fun main(args: Array<String>) {
         }
     }
 
-    stateMachine.fire(MyEvents.Event1)
+    stateMachine.trigger(MyEvents.Event1)
 }

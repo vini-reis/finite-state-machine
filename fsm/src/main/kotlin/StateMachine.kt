@@ -1,100 +1,211 @@
+import java.util.concurrent.atomic.AtomicReference
 import java.util.logging.Logger
 
-class StateMachine<IState : Any, IEvent : Any, ISideEffect : Any> private constructor(){
+/**
+ * A type safe Finite State Machine that might be used to manage processes. The [State] type represents a super type
+ * or an interface used to represent the states. All states must be inherited from [State]. The same goes to
+ * [Event] and [SideEffect].
+ */
+class StateMachine<State : Any, Event : Any, SideEffect : Any> private constructor(){
     lateinit var name: String
-    private lateinit var initialState: IState
-    private lateinit var finalState: IState
-    private lateinit var onTransition: (ISideEffect) -> Unit
-    private lateinit var currentState: IState
-    private val transitionsMap: HashMap<IState, MutableList<Transition<IEvent, IState, ISideEffect>>> = hashMapOf()
+    private lateinit var initialState: State
+    private lateinit var finalState: State
+    private lateinit var onTransition: (from: State, on: Event, to: State, effect: SideEffect) -> Unit
+    private val currentStateRef: AtomicReference<State> = AtomicReference()
+    private val onTransitionsMap: HashMap<State, MutableList<Transition.Internal<Event, State, SideEffect>>> = hashMapOf()
 
-    sealed class Transition<FS, E> {
-        abstract val from: FS
+    /**
+     * Object that maps the transitions on FSM
+     */
+    sealed class Transition<E> {
         abstract val on: E
 
+        /**
+         * Valid transition that will change the FSM [from] current State on event [on] to [to] state
+         * and trigger a side effect [effect]. All those parameters will be passed to [onTransition] callback.
+         */
         data class Valid<FS, E, TS, SE>(
-            override val from: FS,
+            val from: FS,
             override val on: E,
+            val run: List<() -> Unit>,
             val to: TS,
             val effect: SE
-        ) : Transition<FS, E>()
+        ) : Transition<E>()
 
-        data class Invalid<FS, E>(override val from: FS, override val on: E) : Transition<FS, E>()
+        /**
+         * An invalid transition indicates that from state [from] when event [on] is fired, there's no state to go
+         * or side effect to trigger.
+         */
+        data class Invalid<FS, E>(
+            val from: FS,
+            override val on: E
+        ) : Transition<E>()
+
+        /**
+         * Internal transitions will be used to build the FSM transitions.
+         */
+        data class Internal<E, TS, SE>(
+            override val on: E,
+            val run: List<() -> Unit>,
+            val to: TS,
+            val effect: SE
+        ) : Transition<E>()
     }
 
-    open inner class New internal constructor(open val name: String) {
-        fun <S : IState> initialState(
+    /**
+     * Scope to add an initial state to ensure that the FSM with not be created without it.
+     */
+    open inner class InitialStateBuilder internal constructor(open val name: String) {
+        /**
+         * Receives an initial [state] and all the [build] scope that will build next FSM elements. Must return a StateMachine
+         * object so that the build machine operation might be type safe.
+         */
+        fun <S : State> initialState(
             state: S,
-            f: WithInitialState.() -> StateMachine<IState, IEvent, ISideEffect>
-        ): StateMachine<IState, IEvent, ISideEffect> {
+            build: FinalStateBuilder.() -> StateMachine<State, Event, SideEffect>
+        ): StateMachine<State, Event, SideEffect> {
             this@StateMachine.name = name
             initialState = state
+            currentStateRef.set(state)
 
-            return f(WithInitialState())
+            return build(FinalStateBuilder())
         }
     }
 
-    open inner class WithInitialState internal constructor()
-        : New(name)
+    /**
+     * Scope to add a final state to ensure that the FSM with not be created without it.
+     */
+    open inner class FinalStateBuilder internal constructor() : InitialStateBuilder(name)
     {
-        fun <S : IState> finalState(
+        /**
+         * Receives a final [state] and all the [build] scope that will build next FSM elements. Must return a StateMachine
+         * object so that the build machine operation might be type safe.
+         */
+        fun <S : State> finalState(
             state: S,
-            addStates: WithFinalState.() -> StateMachine<IState, IEvent, ISideEffect>
-        ): StateMachine<IState, IEvent, ISideEffect> {
+            build: StatesBuilder.() -> StateMachine<State, Event, SideEffect>
+        ): StateMachine<State, Event, SideEffect> {
             finalState = state
 
-            return addStates(WithFinalState())
+            return build(StatesBuilder())
         }
     }
 
-    open inner class WithFinalState internal constructor() : WithInitialState()
+    /**
+     * Scope used to build all states and a callback to when any transition is done.
+     */
+    open inner class StatesBuilder internal constructor() : FinalStateBuilder()
     {
-        fun state(state: IState, builder: StateBuilder.() -> Transition<IEvent, IState, ISideEffect>) {
-            transitionsMap.getOrPut(state) { mutableListOf() }.add(builder(StateBuilder()))
+        /**
+         * Adds the [state] to the FSM using the provided [build] scope to build the transitions in a type safe way.
+         */
+        fun state(state: State, build: OnEventBuilder.() -> Transition.Internal<Event, State, SideEffect>) {
+            onTransitionsMap.getOrPut(state) { mutableListOf() }.add(build(OnEventBuilder()))
         }
 
-        fun onTransition(execute: (ISideEffect) -> Unit): StateMachine<IState, IEvent, ISideEffect> {
+        /**
+         * Adds the [execute] callback when any valid transition is completed.
+         */
+        fun onTransition(
+            execute: (from: State, on: Event, to: State, effect: SideEffect) -> Unit
+        ): StateMachine<State, Event, SideEffect> {
             onTransition = execute
 
             return this@StateMachine
         }
     }
 
-    inner class StateBuilder {
-        fun on(event: IEvent, builder: TransitionBuilder.() -> Transition<IEvent, IState, ISideEffect>) = builder(TransitionBuilder(event))
-    }
+    /**
+     * Scope used to build all transitions when determined event is fired when the outer state is active.
+     */
+    inner class OnEventBuilder {
 
-    inner class TransitionBuilder(private val on: IEvent){
-        fun transitTo(to: IState, sd: ISideEffect) = Transition(on, to, sd)
-    }
-
-    fun fire(e: IEvent){
-        findTransition(currentState, e).let {
-            when(it) {
-                is Transition.Valid<*, *, *, *> -> {
-                    logger.info("Event ${e::class.simpleName} fired!")
-                    logger.info("Starting side effect ${it.effect::class.simpleName}...")
-                    onTransition(it.effect)
-                    logger.info("Side effect ${it.effect::class.simpleName} finished!")
-                    logger.info("Transiting to ${currentState::class.simpleName} -> ${it.to::class.simpleName}")
-                    currentState = it.to
-                }
-            }
+        /**
+         * Stated that if the outer event is active, when the [event] is fired a callback might be executed, and
+         * some transition must be configured.
+         */
+        fun on(
+            event: Event,
+            build: TransitionBuilder.() -> Transition.Internal<Event, State, SideEffect>
+        ): Transition.Internal<Event, State, SideEffect> {
+            return build(TransitionBuilder(event))
         }
     }
 
-    private fun <IState> findTransition(from: IState, e: IEvent): Transition<IState, IEvent> =
-        transitionsMap.getOrElse(from) { listOf() }.firstOrNull { it.on == e }?.let {
-            Transition.Valid(currentState, e, it.to, it.effect)
-        } ?: Transition.Invalid(currentState, e)
+    /**
+     * Scope used to build transitions callbacks and ensure that all states will be added with a state to go to,
+     * and a side effect to trigger.
+     */
+    inner class TransitionBuilder(private val on: Event){
+        private var executionList: MutableList<() -> Unit> = mutableListOf()
+
+        /**
+         * Adds a callback to be executed when the event [on] is fired. Multiple callbacks might be added, and they will
+         * be executed at the added order, one at a time.
+         */
+        fun execute(run: () -> Unit){ executionList.add(run) }
+
+        /**
+         * Sets up a state [to] to FSM go to after the callbacks are executed. The side effect [sd] will also
+         * be sent to [onTransition] callback.
+         */
+        fun transitTo(to: State, sd: SideEffect) = Transition.Internal(on, this.executionList.toList(), to, sd)
+    }
+
+    /**
+     *  FSM internal initializer.
+     */
+    private fun <S : State, E : Event, SE : SideEffect> initialize(
+        name: String,
+        builder: InitialStateBuilder.() -> StateMachine<S, E, SE>
+    ) = builder(InitialStateBuilder(name))
+
+    /**
+     * Triggers the event [event] on the FSM.
+     */
+    @Suppress("UNCHECKED_CAST")
+    fun trigger(event: Event): Transition<Event> =
+        findTransition(currentStateRef.get(), event).let {
+            when(it) {
+                is Transition.Internal<*, *, *> ->
+                    throw IllegalStateException("Transition could not be internal at this point")
+                is Transition.Invalid<*, *> ->
+                    logger.warning(
+                        "No transition found for state ${currentStateRef.get()::class.simpleName} on event ${it.on::class.simpleName}"
+                    )
+                is Transition.Valid<*, *, *, *> -> {
+                    logger.info("Event ${event::class.simpleName} fired!")
+                    logger.info("Running on event blocks...")
+                    it.run.forEach { it() }
+                    logger.info("Starting side effect ${it.effect!!::class.simpleName}...")
+                    onTransition(currentStateRef.get(), event, it.to as State, it.effect as SideEffect)
+                    logger.info("Side effect ${it.effect::class.simpleName} finished!")
+                    logger.info("Transiting to ${currentStateRef.get()::class.simpleName} -> ${it.to::class.simpleName}")
+                    currentStateRef.set(it.to)
+                }
+            }
+
+            it
+        }
+
+    /**
+     * Looks for a transition with a current event [from] when the event [event] is triggered.
+     */
+    private fun findTransition(from: State, event: Event): Transition<Event> =
+        onTransitionsMap.getOrElse(from) { listOf() }.firstOrNull { it.on == event }?.let {
+            Transition.Valid(currentStateRef, event, it.run, it.to, it.effect)
+        } ?: Transition.Invalid(currentStateRef, event)
 
     companion object {
         private const val TAG = "StateMachine"
         private val logger = Logger.getLogger(TAG)
 
+        /**
+         * Builds an FSM with determined [name].
+         */
         fun <S : Any, E : Any, SE : Any> build(
             name: String,
-            init: StateMachine<S, E, SE>.New.() -> StateMachine<S, E, SE>
-        ) = init(New(name))
+            init: StateMachine<S, E, SE>.InitialStateBuilder.() -> StateMachine<S, E, SE>
+        ) = StateMachine<S, E, SE>().initialize(name, init)
     }
 }

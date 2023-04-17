@@ -32,7 +32,7 @@ fun main(args: Array<String>) {
                             logger.info("I am running before this transition is made")
                         }
 
-                        transitTo(MyStates.State1, MySideEffects.Effect1)
+                        transitTo(MyStates.State1, MySideEffects.Effect1, MyEvents.Event2)
                     }
                 }
 

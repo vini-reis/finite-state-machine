@@ -12,7 +12,7 @@ class StateMachine<State : Any, Event : Any, SideEffect : Any> private construct
     private lateinit var finalState: State
     private lateinit var onTransition: (from: State, on: Event, to: State, effect: SideEffect) -> Unit
     private val currentStateRef: AtomicReference<State> = AtomicReference()
-    private val onTransitionsMap: HashMap<State, MutableList<Transition.Internal<Event, State, SideEffect>>> = hashMapOf()
+    private val onTransitionsMap: HashMap<State, MutableList<Transition.Internal<Event, State, SideEffect, Event>>> = hashMapOf()
 
     /**
      * Object that maps the transitions on FSM
@@ -24,12 +24,13 @@ class StateMachine<State : Any, Event : Any, SideEffect : Any> private construct
          * Valid transition that will change the FSM [from] current State on event [on] to [to] state
          * and trigger a side effect [effect]. All those parameters will be passed to [onTransition] callback.
          */
-        data class Valid<FS, E, TS, SE>(
+        data class Valid<FS, E, TS, SE, TE>(
             val from: FS,
             override val on: E,
             val run: List<() -> Unit>,
             val to: TS,
-            val effect: SE
+            val effect: SE? = null,
+            val trigger: TE? = null,
         ) : Transition<E>()
 
         /**
@@ -38,17 +39,18 @@ class StateMachine<State : Any, Event : Any, SideEffect : Any> private construct
          */
         data class Invalid<FS, E>(
             val from: FS,
-            override val on: E
+            override val on: E,
         ) : Transition<E>()
 
         /**
          * Internal transitions will be used to build the FSM transitions.
          */
-        data class Internal<E, TS, SE>(
+        data class Internal<E, TS, SE, TE>(
             override val on: E,
             val run: List<() -> Unit>,
             val to: TS,
-            val effect: SE
+            val effect: SE? = null,
+            val trigger: TE? = null,
         ) : Transition<E>()
     }
 
@@ -99,7 +101,7 @@ class StateMachine<State : Any, Event : Any, SideEffect : Any> private construct
         /**
          * Adds the [state] to the FSM using the provided [build] scope to build the transitions in a type safe way.
          */
-        fun state(state: State, build: OnEventBuilder.() -> Transition.Internal<Event, State, SideEffect>) {
+        fun state(state: State, build: OnEventBuilder.() -> Transition.Internal<Event, State, SideEffect, Event>) {
             onTransitionsMap.getOrPut(state) { mutableListOf() }.add(build(OnEventBuilder()))
         }
 
@@ -126,8 +128,8 @@ class StateMachine<State : Any, Event : Any, SideEffect : Any> private construct
          */
         fun on(
             event: Event,
-            build: TransitionBuilder.() -> Transition.Internal<Event, State, SideEffect>
-        ): Transition.Internal<Event, State, SideEffect> {
+            build: TransitionBuilder.() -> Transition.Internal<Event, State, SideEffect, Event>
+        ): Transition.Internal<Event, State, SideEffect, Event> {
             return build(TransitionBuilder(event))
         }
     }
@@ -143,13 +145,15 @@ class StateMachine<State : Any, Event : Any, SideEffect : Any> private construct
          * Adds a callback to be executed when the event [on] is fired. Multiple callbacks might be added, and they will
          * be executed at the added order, one at a time.
          */
-        fun execute(run: () -> Unit){ executionList.add(run) }
+        fun execute(callback: () -> Unit){ executionList.add(callback) }
 
         /**
-         * Sets up a state [to] to FSM go to after the callbacks are executed. The side effect [sd] will also
-         * be sent to [onTransition] callback.
+         * Sets up a state [to] to FSM go to after the callbacks are executed. The side effect [effect], if not null,
+         * will also be sent to [onTransition] callback. If [trigger] event is not null, it will be triggered after
+         * [onTransition] callback execution.
          */
-        fun transitTo(to: State, sd: SideEffect) = Transition.Internal(on, this.executionList.toList(), to, sd)
+        fun transitTo(to: State, effect: SideEffect? = null, trigger: Event? = null) =
+            Transition.Internal(on, this.executionList.toList(), to, effect, trigger)
     }
 
     /**
@@ -165,35 +169,54 @@ class StateMachine<State : Any, Event : Any, SideEffect : Any> private construct
      */
     @Suppress("UNCHECKED_CAST")
     fun trigger(event: Event): Transition<Event> =
-        findTransition(currentStateRef.get(), event).let {
-            when(it) {
-                is Transition.Internal<*, *, *> ->
+        findTransition(currentStateRef.get(), event).let { transition ->
+            when(transition) {
+                is Transition.Internal<*, *, *, *> ->
                     throw IllegalStateException("Transition could not be internal at this point")
                 is Transition.Invalid<*, *> ->
                     logger.warning(
-                        "No transition found for state ${currentStateRef.get()::class.simpleName} on event ${it.on::class.simpleName}"
+                        "No transition found for state ${currentStateRef.get()::class.simpleName} on event ${transition.on::class.simpleName}"
                     )
-                is Transition.Valid<*, *, *, *> -> {
+                is Transition.Valid<*, *, *, *, *> -> {
                     logger.info("Event ${event::class.simpleName} fired!")
+
                     logger.info("Running on event blocks...")
-                    it.run.forEach { it() }
-                    logger.info("Starting side effect ${it.effect!!::class.simpleName}...")
-                    onTransition(currentStateRef.get(), event, it.to as State, it.effect as SideEffect)
-                    logger.info("Side effect ${it.effect::class.simpleName} finished!")
-                    logger.info("Transiting to ${currentStateRef.get()::class.simpleName} -> ${it.to::class.simpleName}")
-                    currentStateRef.set(it.to)
+                    transition.run.forEach { it() }
+
+                    logger.info("Transiting to ${currentStateRef.get()::class.simpleName} -> ${transition.to!!::class.simpleName}")
+                    currentStateRef.set(transition.to as State)
+
+                    transition.effect?.let { sideEffect ->
+                        logger.info("Triggering side effect ${sideEffect::class.simpleName}...")
+                        onTransition(currentStateRef.get(), event, transition.to, (sideEffect as SideEffect))
+                        logger.info("Side effect ${transition.effect::class.simpleName} finished!")
+                    }
+
+                    if (currentStateRef.get() == finalState){
+                        finish()
+                    } else {
+                        transition.trigger?.let { event -> trigger(event as Event) }
+                    }
                 }
             }
 
-            it
+            transition
         }
+
+    /**
+     * Finished the FSM and returns to initial state
+     */
+    private fun finish() {
+        logger.info("Finishing machine!")
+        currentStateRef.set(initialState)
+    }
 
     /**
      * Looks for a transition with a current event [from] when the event [event] is triggered.
      */
     private fun findTransition(from: State, event: Event): Transition<Event> =
         onTransitionsMap.getOrElse(from) { listOf() }.firstOrNull { it.on == event }?.let {
-            Transition.Valid(currentStateRef, event, it.run, it.to, it.effect)
+            Transition.Valid(currentStateRef, event, it.run, it.to, it.effect, it.trigger)
         } ?: Transition.Invalid(currentStateRef, event)
 
     companion object {

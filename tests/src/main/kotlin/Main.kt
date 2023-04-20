@@ -20,29 +20,44 @@ sealed class MySideEffects {
     object Effect2 : SideEffect
 }
 
+data class Context(
+    val one: Int,
+    val two: String,
+) {
+    var three: Long? = null
+}
+
 private val logger = Logger.getLogger("Main")
 
 fun main(args: Array<String>) {
-    val stateMachine = StateMachine.build<State, Event, SideEffect>("test") {
+    val stateMachine = StateMachine.build<State, Event, SideEffect, Context>("test") {
         initialState(MyStates.Initial) {
             finalState(MyStates.Final) {
-                state(MyStates.Initial) {
+                context {
+                    Context(1, "Example")
+                }
+
+                from(MyStates.Initial) {
                     on(MyEvents.Event1) {
-                        execute {
+                        execute { context ->
                             logger.info("I am running before this transition is made")
+
+                            context.three = 10L
+
+                            trigger(MyEvents.Event2)
                         }
 
-                        transitTo(MyStates.State1, MySideEffects.Effect1, MyEvents.Event2)
+                        transitTo(MyStates.State1, MySideEffects.Effect1)
                     }
                 }
 
-                state(MyStates.State1) {
+                from(MyStates.State1) {
                     on(MyEvents.Event2) {
                         transitTo(MyStates.Final, MySideEffects.Effect2)
                     }
                 }
 
-                onTransition { _, _, _, effect: SideEffect ->
+                onTransition { _, _, _, effect: SideEffect, _ ->
                     when(effect) {
                         is MySideEffects.Effect1 -> { logger.info("Effect1 execution") }
                         is MySideEffects.Effect2 -> { logger.info("Effect2 execution") }

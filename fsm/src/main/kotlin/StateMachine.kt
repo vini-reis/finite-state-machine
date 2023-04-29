@@ -29,15 +29,13 @@ class StateMachine<State : Any, Event : Any, SideEffect : Any, Context : Any> pr
      * Object that maps the transitions on FSM
      */
     sealed class Transition<S : Any, E : Any> {
-        abstract val on: E
-
         /**
          * Valid transition that will change the FSM from current State on event [on] to [to] state
          * and trigger a side effect [effect]. All those parameters will be passed to [onTransition] callback.
          */
         data class Valid<S : Any, E : Any, SE : Any, C : Any>(
-            val exceptions: List<S> = listOf(),
-            override val on: E,
+            val exceptions: Set<S> = setOf(),
+            val on: Set<E>,
             val run: List<ExecutionScope<S, E, SE, C>>,
             val handlers: List<EventHandler<S, E, SE, C>> = listOf(),
             val to: S,
@@ -50,7 +48,7 @@ class StateMachine<State : Any, Event : Any, SideEffect : Any, Context : Any> pr
          */
         data class Invalid<S : Any, E : Any>(
             val from: S,
-            override val on: E,
+            val on: E,
         ) : Transition<S, E>()
     }
 
@@ -109,7 +107,7 @@ class StateMachine<State : Any, Event : Any, SideEffect : Any, Context : Any> pr
 
         fun fromAll(vararg exceptions: State, builder: OnEventBuilder.() -> Transition.Valid<State, Event, SideEffect, Context>) {
             callbacks.getOrPut(null) { mutableListOf() }.add(
-                builder(OnEventBuilder(exceptions.toList()))
+                builder(OnEventBuilder(exceptions.toSet()))
             )
         }
 
@@ -128,16 +126,16 @@ class StateMachine<State : Any, Event : Any, SideEffect : Any, Context : Any> pr
     /**
      * Scope used to build all transitions when determined event is fired when the outer state is active.
      */
-    inner class OnEventBuilder(private val exceptions: List<State> = listOf()) {
+    inner class OnEventBuilder(private val exceptions: Set<State> = setOf()) {
         /**
-         * Stated that if the outer event is active, when the [event] is fired a callback might be executed, and
+         * Stated that if the outer event is active, when any of the [events] is fired a callback might be executed, and
          * some transition must be configured.
          */
         fun on(
-            event: Event,
+            vararg events: Event,
             build: TransitionScope<State, Event, SideEffect, Context>
         ): Transition.Valid<State, Event, SideEffect, Context> {
-            return build(TransitionBuilder(exceptions, event))
+            return build(TransitionBuilder(exceptions, events.toSet()))
         }
     }
 
@@ -146,8 +144,8 @@ class StateMachine<State : Any, Event : Any, SideEffect : Any, Context : Any> pr
      * and a side effect to trigger.
      */
     inner class TransitionBuilder(
-        private val exceptions: List<State> = listOf(),
-        private val on: Event
+        private val exceptions: Set<State> = setOf(),
+        private val on: Set<Event>
     ){
         private val executions: MutableList<ExecutionBuilder.(Context) -> Unit> = mutableListOf()
         private val handlers = mutableListOf<EventHandler<State, Event, SideEffect, Context>>()

@@ -9,6 +9,10 @@ typealias TransitionScope<S, E, SE, C> = StateMachine<S, E, SE, C>.TransitionBui
 typealias ExecutionScope<S, E, SE, C> = StateMachine<S, E, SE, C>.ExecutionBuilder.(C) -> Unit
 typealias OnTransition<S, E, SE, C> = (from: S, on: E, to: S, effect: SE, context: C) -> Unit
 
+// TODO: Use DSLMarker to implement type inference
+@DslMarker
+annotation class StateMachineMarker
+
 /**
  * A type safe Finite State Machine that might be used to manage processes. The [State] type represents a super type
  * or an interface used to represent the states. All states must be inherited from [State]. The same goes to
@@ -20,8 +24,8 @@ class StateMachine<State : Any, Event : Any, SideEffect : Any, Context : Any> pr
     private lateinit var finalState: State
     private lateinit var context: Context
     private lateinit var onTransition: OnTransition<State, Event, SideEffect, Context>
-    private var onFinish: (Context) -> Unit = { }
     private val currentStateRef: AtomicReference<State> = AtomicReference()
+    private var onException: (context: Context, e: Exception) -> Unit = { _, _ -> }
     private val callbacks: LinkedHashMap<State?, MutableList<Transition.Valid<State, Event, SideEffect, Context>>> =
         linkedMapOf()
 
@@ -109,6 +113,13 @@ class StateMachine<State : Any, Event : Any, SideEffect : Any, Context : Any> pr
             callbacks.getOrPut(null) { mutableListOf() }.add(
                 builder(OnEventBuilder(exceptions.toSet()))
             )
+        }
+
+        /**
+         * This lambda will be executed to treat caught during handlers execution.
+         */
+        fun onException(handler: (Context, Exception) -> Unit) {
+            onException = handler
         }
 
         /**
@@ -200,7 +211,7 @@ class StateMachine<State : Any, Event : Any, SideEffect : Any, Context : Any> pr
                 try {
                     it(ExecutionBuilder(), context)
                 } catch (e: Exception) {
-                    // TODO: Catch errors
+                    onException(context, e)
                 }
             }
 
@@ -210,7 +221,7 @@ class StateMachine<State : Any, Event : Any, SideEffect : Any, Context : Any> pr
                 try {
                     handler.execute(ExecutionBuilder(), context)
                 } catch (e: Exception) {
-                    // TODO: Catch errors
+                    onException(context, e)
                 }
             }
 
@@ -245,7 +256,6 @@ class StateMachine<State : Any, Event : Any, SideEffect : Any, Context : Any> pr
      */
     private fun finish() {
         logger.info("Finishing machine!")
-        onFinish(context)
         currentStateRef.set(initialState)
     }
 

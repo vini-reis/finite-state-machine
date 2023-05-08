@@ -4,6 +4,7 @@ import StateMachine
 import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
 import java.util.logging.Logger
+import kotlin.test.assertEquals
 
 class BuilderTest {
     sealed class State {
@@ -39,7 +40,7 @@ class BuilderTest {
     @DisplayName("Build and run a complete state machine")
     fun buildAndRun() {
         val stateMachine = StateMachine.build<State, Event, SideEffect, Context>(
-            "test",
+            "CompleteService",
             State.Initial
         ) {
             context {
@@ -51,8 +52,6 @@ class BuilderTest {
                     execute { context ->
                         logger.info("I am running before this transition is made")
 
-                        context.three = 10L
-
                         trigger(Event.Complete)
                     }
 
@@ -62,19 +61,33 @@ class BuilderTest {
 
             from(State.State1) {
                 on(Event.Complete) {
+                    execute { context ->
+                        context.three = 10L
+                    }
+
                     finishOn(State.Final, SideEffect.Finished)
                 }
             }
 
-            onException { context, state, event, exception ->
+            onException { _, state, event, exception ->
                 logger.severe("Oops! Something went wrong during step $state on event $event...")
                 exception.printStackTrace()
             }
 
-            onTransition { _, _, _, effect: SideEffect, _ ->
+            onTransition { current: State, on: Event, target: State, effect: SideEffect, context: Context ->
                 when(effect) {
-                    is SideEffect.FinishedStep1 -> { logger.info("Step 1 finished") }
-                    is SideEffect.Finished -> { logger.info("Did something before this machine finishes.") }
+                    is SideEffect.FinishedStep1 -> {
+                        assertEquals(State.Initial, current)
+                        assertEquals(Event.Start, on)
+                        assertEquals(State.State1, target)
+                        assertEquals(null, context.three)
+                    }
+                    is SideEffect.Finished -> {
+                        assertEquals(State.State1, current)
+                        assertEquals(Event.Complete, on)
+                        assertEquals(State.Final, target)
+                        assertEquals(10L, context.three)
+                    }
                 }
             }
         }

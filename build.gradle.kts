@@ -13,8 +13,7 @@ dependencies {
     implementation ("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.7.0")
     implementation ("org.jetbrains.kotlin:kotlin-stdlib-jdk8")
 
-    testImplementation (platform("org.junit:junit-bom:5.9.1"))
-    testImplementation ("org.junit.jupiter:junit-jupiter")
+    testImplementation(kotlin("test"))
 }
 
 tasks.test {

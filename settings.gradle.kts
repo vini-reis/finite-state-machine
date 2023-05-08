@@ -1,4 +1,2 @@
-
-rootProject.name = "safe-finite-state-machine"
+rootProject.name = "async-type-safe-fsm"
 include("fsm")
-include("tests")

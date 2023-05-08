@@ -1,18 +1,20 @@
 plugins {
-    kotlin("jvm") version "1.8.20"
-    application
+    kotlin("jvm") version "1.8.21"
 }
 
-group = "br.com.reis.vinicius"
-version = "1.0-SNAPSHOT"
+group = "io.github.vinicreis"
+version = "1.0.0"
 
 repositories {
     mavenCentral()
-    maven("https://oss.sonatype.org/content/repositories/snapshots/")
 }
 
 dependencies {
-    testImplementation(kotlin("test"))
+    implementation ("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.7.0")
+    implementation ("org.jetbrains.kotlin:kotlin-stdlib-jdk8")
+
+    testImplementation (platform("org.junit:junit-bom:5.9.1"))
+    testImplementation ("org.junit.jupiter:junit-jupiter")
 }
 
 tasks.test {
@@ -21,8 +23,4 @@ tasks.test {
 
 kotlin {
     jvmToolchain(17)
-}
-
-application {
-    mainClass.set("MainKt")
 }

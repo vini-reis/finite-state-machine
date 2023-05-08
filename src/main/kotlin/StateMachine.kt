@@ -211,14 +211,14 @@ class StateMachine<S : Any, E : Any, SE : Any, C : Any> private constructor(
                 logger.info("Finishing handler ${handler::class.simpleName ?: "anonymous"}")
             }
 
-            logger.info("Transiting to ${currentStateRef.get()} -> ${transition.to}")
-            currentStateRef.set(transition.to)
-
             transition.effect?.let { sideEffect ->
-                logger.info("Triggering side effect $sideEffect...")
+            logger.info("Triggering side effect $sideEffect...")
                 onTransition(currentStateRef.get(), event, transition.to, sideEffect, context)
                 logger.info("Side effect ${transition.effect} finished!")
             }
+
+            logger.info("Transiting to ${currentStateRef.get()} -> ${transition.to}")
+            currentStateRef.set(transition.to)
 
             if (transition.action is Action.Finish){
                 consumer.stop()

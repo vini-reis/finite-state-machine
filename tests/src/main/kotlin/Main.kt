@@ -1,3 +1,4 @@
+import java.util.logging.Level
 import java.util.logging.Logger
 
 interface State
@@ -8,16 +9,22 @@ sealed class MyStates {
     object Initial : State
     object State1: State
     object Final: State
+
+    override fun toString() = this::class.simpleName ?: super.toString()
 }
 
 sealed class MyEvents {
-    object Event1: Event
-    object Event2: Event
+    object Start: Event
+    object Complete: Event
+
+    override fun toString() = this::class.simpleName ?: super.toString()
 }
 
 sealed class MySideEffects {
-    object Effect1 : SideEffect
-    object Effect2 : SideEffect
+    object FinishedStep1 : SideEffect
+    object Finished : SideEffect
+
+    override fun toString() = this::class.simpleName ?: super.toString()
 }
 
 data class Context(
@@ -30,42 +37,46 @@ data class Context(
 private val logger = Logger.getLogger("Main")
 
 fun main(args: Array<String>) {
-    val stateMachine = StateMachine.build<State, Event, SideEffect, Context>("test") {
-        initialState(MyStates.Initial) {
-            finalState(MyStates.Final) {
-                context {
-                    Context(1, "Example")
+    val stateMachine = StateMachine.build<State, Event, SideEffect, Context>(
+        "test",
+        MyStates.Initial
+    ) {
+        context {
+            Context(1, "Example")
+        }
+
+        from(MyStates.Initial) {
+            on(MyEvents.Start) {
+                execute { context ->
+                    logger.info("I am running before this transition is made")
+
+                    context.three = 10L
+
+                    trigger(MyEvents.Complete)
                 }
 
-                from(MyStates.Initial) {
-                    on(MyEvents.Event1) {
-                        execute { context ->
-                            logger.info("I am running before this transition is made")
+                transitTo(MyStates.State1, MySideEffects.FinishedStep1)
+            }
+        }
 
-                            context.three = 10L
+        from(MyStates.State1) {
+            on(MyEvents.Complete) {
+                finishOn(MyStates.Final, MySideEffects.Finished)
+            }
+        }
 
-                            trigger(MyEvents.Event2)
-                        }
+        onException { context, state, event, exception ->
+            logger.severe("Oops! Something went wrong during step $state on event $event...")
+            exception.printStackTrace()
+        }
 
-                        transitTo(MyStates.State1, MySideEffects.Effect1)
-                    }
-                }
-
-                from(MyStates.State1) {
-                    on(MyEvents.Event2) {
-                        transitTo(MyStates.Final, MySideEffects.Effect2)
-                    }
-                }
-
-                onTransition { _, _, _, effect: SideEffect, _ ->
-                    when(effect) {
-                        is MySideEffects.Effect1 -> { logger.info("Effect1 execution") }
-                        is MySideEffects.Effect2 -> { logger.info("Effect2 execution") }
-                    }
-                }
+        onTransition { _, _, _, effect: SideEffect, _ ->
+            when(effect) {
+                is MySideEffects.FinishedStep1 -> { logger.info("Step 1 finished") }
+                is MySideEffects.Finished -> { logger.info("Did something before this machine finishes.") }
             }
         }
     }
 
-    stateMachine.trigger(MyEvents.Event1)
+    stateMachine.start(MyEvents.Start)
 }

@@ -1,29 +1,39 @@
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.channels.ClosedReceiveChannelException
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.atomic.AtomicReference
 import java.util.logging.Logger
-
-typealias InitialStateScope<S, E, SE, C> = StateMachine<S, E, SE, C>.InitialStateBuilder.() -> StateMachine<S, E, SE, C>
-typealias FinalStateScope<S, E, SE, C> = StateMachine<S, E, SE, C>.FinalStateBuilder.() -> StateMachine<S, E, SE, C>
-typealias StateScope<S, E, SE, C> = StateMachine<S, E, SE, C>.StatesBuilder.() -> StateMachine<S, E, SE, C>
-typealias EventScope<S, E, SE, C> = StateMachine<S, E, SE, C>.OnEventBuilder.() -> StateMachine.Transition.Valid<S, E, SE, C>
-typealias TransitionScope<S, E, SE, C> = StateMachine<S, E, SE, C>.TransitionBuilder.() -> StateMachine.Transition.Valid<S, E, SE, C>
-typealias ExecutionScope<S, E, SE, C> = StateMachine<S, E, SE, C>.ExecutionBuilder.(C) -> Unit
-typealias OnTransition<S, E, SE, C> = (from: S, on: E, to: S, effect: SE, context: C) -> Unit
-
 /**
- * A type safe Finite State Machine that might be used to manage processes. The [State] type represents a super type
- * or an interface used to represent the states. All states must be inherited from [State]. The same goes to
- * [Event] and [SideEffect].
+ * A type safe Finite State Machine that might be used to manage processes. The [S] type represents a super type
+ * or an interface used to represent the states. All states must be inherited from [S]. The same goes to
+ * [E] and [SE].
  */
-class StateMachine<State : Any, Event : Any, SideEffect : Any, Context : Any> private constructor(){
-    lateinit var name: String
-    private lateinit var initialState: State
-    private lateinit var finalState: State
-    private lateinit var context: Context
-    private lateinit var onTransition: OnTransition<State, Event, SideEffect, Context>
-    private var onFinish: (Context) -> Unit = { }
-    private val currentStateRef: AtomicReference<State> = AtomicReference()
-    private val callbacks: LinkedHashMap<State?, MutableList<Transition.Valid<State, Event, SideEffect, Context>>> =
+@Suppress("UNUSED")
+class StateMachine<S : Any, E : Any, SE : Any, C : Any> private constructor(
+    val name: String,
+    private val initialState: S
+){
+    private lateinit var context: C
+    private lateinit var onTransition: (S, E, S, SE, C) -> Unit
+    private var onException: (C, S, E, Exception) -> Unit = { _, _, _, _ -> }
+    private val currentStateRef: AtomicReference<S> = AtomicReference()
+    private var running: Boolean = false
+    private var channel: Channel<E>? = null
+    private val eventQueue: LinkedBlockingQueue<E> = LinkedBlockingQueue()
+    private val transitions: LinkedHashMap<S?, MutableList<Transition.Valid<S, E, SE, C>>> =
         linkedMapOf()
+
+    init {
+        currentStateRef.set(initialState)
+    }
+
+    sealed class Action {
+        object None : Action()
+        object Finish : Action()
+    }
 
     /**
      * Object that maps the transitions on FSM
@@ -36,10 +46,10 @@ class StateMachine<State : Any, Event : Any, SideEffect : Any, Context : Any> pr
         data class Valid<S : Any, E : Any, SE : Any, C : Any>(
             val exceptions: Set<S> = setOf(),
             val on: Set<E>,
-            val run: List<ExecutionScope<S, E, SE, C>>,
             val handlers: List<EventHandler<S, E, SE, C>> = listOf(),
             val to: S,
             val effect: SE? = null,
+            val action: Action = Action.None
         ) : Transition<S, E>()
 
         /**
@@ -53,61 +63,72 @@ class StateMachine<State : Any, Event : Any, SideEffect : Any, Context : Any> pr
     }
 
     /**
-     * Scope to add an initial state to ensure that the FSM with not be created without it.
-     */
-    open inner class InitialStateBuilder internal constructor(open val name: String) {
-        /**
-         * Receives an initial [state] and all the [build] scope that will build next FSM elements. Must return a StateMachine
-         * object so that the build machine operation might be type safe.
-         */
-        fun <S : State> initialState(
-            state: S,
-            build: FinalStateScope<State, Event, SideEffect, Context>
-        ): StateMachine<State, Event, SideEffect, Context> {
-            this@StateMachine.name = name
-            initialState = state
-            currentStateRef.set(state)
-
-            return build(FinalStateBuilder())
-        }
-    }
-
-    /**
-     * Scope to add a final state to ensure that the FSM with not be created without it.
-     */
-    open inner class FinalStateBuilder internal constructor() : InitialStateBuilder(name)
-    {
-        /**
-         * Receives a final [state] and all the [build] scope that will build next FSM elements. Must return a StateMachine
-         * object so that the build machine operation might be type safe.
-         */
-        fun <S : State> finalState(
-            state: S,
-            build: StateScope<State, Event, SideEffect, Context>
-        ): StateMachine<State, Event, SideEffect, Context> {
-            finalState = state
-
-            return build(StatesBuilder())
-        }
-    }
-
-    /**
      * Scope used to build all states and a callback to when any transition is done.
      */
-    open inner class StatesBuilder internal constructor() : FinalStateBuilder()
-    {
-        fun context(builder: () -> Context) { context = builder() }
+    @BuilderDslMarker
+    open inner class Builder {
+        fun context(builder: () -> C) { context = builder() }
 
         /**
-         * Adds the [state] to the FSM using the provided [build] scope to build the transitions in a type safe way.
+         * Scope used to build all transitions when determined event is fired when the outer state is active.
          */
-        fun from(state: State, build: EventScope<State, Event, SideEffect, Context>) {
-            callbacks.getOrPut(state) { mutableListOf() }.add(build(OnEventBuilder()))
+        @BuilderDslMarker
+        inner class OnEventScope(private val exceptions: Set<S> = setOf()) {
+            /**
+             * Stated that if the outer event is active, when any of the [events] is fired a callback might be executed, and
+             * some transition must be configured.
+             */
+            fun on(
+                vararg events: E,
+                build: TransitionScope.() -> Transition.Valid<S, E, SE, C>
+            ): Transition.Valid<S, E, SE, C> {
+                return build(TransitionScope(events.toSet()))
+            }
+
+            /**
+             * Scope used to build transitions callbacks and ensure that all states will be added with a state to go to,
+             * and a side effect to trigger.
+             */
+            @BuilderDslMarker
+            inner class TransitionScope(private val on: Set<E>){
+                private val handlers = mutableListOf<EventHandler<S, E, SE, C>>()
+
+                /**
+                 * Execute an anonymous [handler] after some transition is done.
+                 */
+                fun execute(handler: Controller.(C) -> Unit) {
+                    handlers.add(EventHandler.build(handler))
+                }
+
+                /**
+                 * Adds [handler] to [on] event.
+                 */
+                fun execute(handler: EventHandler<S, E, SE, C>){ handlers.add(handler) }
+
+                /**
+                 * Sets up a state [to] to FSM go to after the callbacks are executed. The side effect [effect], if not null,
+                 * will also be sent to [onTransition] callback.
+                 */
+                fun transitTo(to: S, effect: SE? = null): Transition.Valid<S, E, SE, C> =
+                    Transition.Valid(this@OnEventScope.exceptions, on, handlers, to, effect)
+
+                fun finishOn(state: S, effect: SE? = null): Transition.Valid<S, E, SE, C> =
+                    Transition.Valid(this@OnEventScope.exceptions, on, handlers, state, effect, Action.Finish)
+            }
         }
 
-        fun fromAll(vararg exceptions: State, builder: OnEventBuilder.() -> Transition.Valid<State, Event, SideEffect, Context>) {
-            callbacks.getOrPut(null) { mutableListOf() }.add(
-                builder(OnEventBuilder(exceptions.toSet()))
+        /**
+         * Adds the [states] to the FSM using the provided [build] scope to build the transitions in a type safe way.
+         */
+        fun from(vararg states: S, build: OnEventScope.() -> Transition.Valid<S, E, SE, C>) {
+            states.forEach { state ->
+                transitions.getOrPut(state) { mutableListOf() }.add(build(OnEventScope()))
+            }
+        }
+
+        fun fromAll(vararg exceptions: S, builder: OnEventScope.() -> Transition.Valid<S, E, SE, C>) {
+            transitions.getOrPut(null) { mutableListOf() }.add(
+                builder(OnEventScope(exceptions.toSet()))
             )
         }
 
@@ -115,102 +136,53 @@ class StateMachine<State : Any, Event : Any, SideEffect : Any, Context : Any> pr
          * Adds the [execute] callback when any valid transition is completed.
          */
         fun onTransition(
-            execute: OnTransition<State, Event, SideEffect, Context>
-        ): StateMachine<State, Event, SideEffect, Context> {
+            execute: (S, E, S, SE, C) -> Unit
+        ): StateMachine<S, E, SE, C> {
             onTransition = execute
 
             return this@StateMachine
         }
-    }
 
-    /**
-     * Scope used to build all transitions when determined event is fired when the outer state is active.
-     */
-    inner class OnEventBuilder(private val exceptions: Set<State> = setOf()) {
-        /**
-         * Stated that if the outer event is active, when any of the [events] is fired a callback might be executed, and
-         * some transition must be configured.
-         */
-        fun on(
-            vararg events: Event,
-            build: TransitionScope<State, Event, SideEffect, Context>
-        ): Transition.Valid<State, Event, SideEffect, Context> {
-            return build(TransitionBuilder(exceptions, events.toSet()))
+        fun onException(handler: (C, S, E, Exception) -> Unit) {
+            onException = handler
         }
     }
 
     /**
-     * Scope used to build transitions callbacks and ensure that all states will be added with a state to go to,
-     * and a side effect to trigger.
+     * Controller to send only selected commands to the state machine.
      */
-    inner class TransitionBuilder(
-        private val exceptions: Set<State> = setOf(),
-        private val on: Set<Event>
-    ){
-        private val executions: MutableList<ExecutionBuilder.(Context) -> Unit> = mutableListOf()
-        private val handlers = mutableListOf<EventHandler<State, Event, SideEffect, Context>>()
-
-        /**
-         * Execute an anonymous [callback] after some transition is done.
-         */
-        fun execute(callback: ExecutionBuilder.(Context) -> Unit) { executions.add(callback) }
-
-        /**
-         * Adds [handler] to [on] event.
-         */
-        fun handler(handler: EventHandler<State, Event, SideEffect, Context>){ handlers.add(handler) }
-
-        /**
-         * Sets up a state [to] to FSM go to after the callbacks are executed. The side effect [effect], if not null,
-         * will also be sent to [onTransition] callback.
-         */
-        fun transitTo(to: State, effect: SideEffect? = null): Transition.Valid<State, Event, SideEffect, Context> =
-            Transition.Valid(exceptions, on, executions, handlers, to, effect)
-    }
-
-    /**
-     * Execution scope to allow FSM call [trigger] function only.
-     */
-    inner class ExecutionBuilder {
+    inner class Controller {
         /**
          * Triggers an [event] inside the outer state machine.
          */
-        fun trigger(event: Event) {
-            this@StateMachine.trigger(event)
+        fun trigger(event: E) = runBlocking {
+            channel?.send(event)
         }
     }
 
     /**
      *  FSM internal initializer.
      */
-    private fun <S : State, E : Event, SE : SideEffect, C : Context> initialize(
-        name: String,
-        builder: InitialStateBuilder.() -> StateMachine<S, E, SE, C>
-    ) = builder(InitialStateBuilder(name))
+    private fun <S : Any, E : Any, SE : Any, C : Any> initialize(
+        builder: Builder.() -> StateMachine<S, E, SE, C>
+    ) = builder(Builder())
 
     /**
      * Triggers the event [event] on the FSM.
      */
-    fun trigger(event: Event): Transition<State, Event> =
+    private fun trigger(event: E): Transition<S, E> = runBlocking {
         findTransition(currentStateRef.get(), event)?.let { transition ->
             logger.info("Event ${event::class.simpleName} fired!")
 
             logger.info("Running on event blocks...")
-            transition.run.forEach {
-                try {
-                    it(ExecutionBuilder(), context)
-                } catch (e: Exception) {
-                    // TODO: Catch errors
-                }
-            }
 
             transition.handlers.forEach { handler ->
                 logger.info("Calling handler ${handler::class.simpleName}")
 
                 try {
-                    handler.execute(ExecutionBuilder(), context)
+                    handler.execute(Controller(), context)
                 } catch (e: Exception) {
-                    // TODO: Catch errors
+                    onException(context, currentStateRef.get(), event, e)
                 }
             }
 
@@ -221,39 +193,65 @@ class StateMachine<State : Any, Event : Any, SideEffect : Any, Context : Any> pr
             currentStateRef.set(transition.to)
 
             transition.effect?.let { sideEffect ->
-                logger.info("Triggering side effect ${sideEffect::class.simpleName}...")
+                logger.info("Triggering side effect $sideEffect...")
                 onTransition(currentStateRef.get(), event, transition.to, sideEffect, context)
-                logger.info("Side effect ${transition.effect::class.simpleName} finished!")
+                logger.info("Side effect ${transition.effect} finished!")
             }
 
-            if (currentStateRef.get() == finalState){
+            if (transition.action is Action.Finish){
                 finish()
             }
 
             transition
         } ?: run {
             logger.warning(
-                "No transition found for state " +
-                        "${currentStateRef.get()::class.simpleName} on event ${event::class.simpleName}"
+                "No transition found for state ${currentStateRef.get()} on event $event"
             )
 
             Transition.Invalid(currentStateRef.get(), event)
         }
+    }
+
+    fun start(event: E) = runBlocking {
+        launch(Dispatchers.IO) {
+            running = true
+            channel.send(event)
+
+            try {
+                while(true) {
+                    val result = channel.tryReceive()
+
+                    if (result.isSuccess) {
+                        result.getOrNull()?.let { trigger(it) }
+                    }
+                }
+            } catch (e: ClosedReceiveChannelException) {
+                logger.warning("Channel closed to receive events!")
+            } catch (e: Exception) {
+                logger.warning("Something when wrong on channel...")
+                e.printStackTrace()
+            } finally {
+                logger.info("Machine stopped")
+                running = false
+            }
+        }
+    }
 
     /**
      * Finished the FSM and returns to initial state
      */
     private fun finish() {
-        logger.info("Finishing machine!")
-        onFinish(context)
+        logger.info("Finishing machine...")
         currentStateRef.set(initialState)
     }
 
     /**
      * Looks for a transition with a current event [from] when the event [event] is triggered.
      */
-    private fun findTransition(from: State, event: Event): Transition.Valid<State, Event, SideEffect, Context>? =
-        callbacks.getOrElse(from) { listOf() }.firstOrNull { it.on == event }
+    private fun findTransition(from: S, event: E): Transition.Valid<S, E, SE, C>? =
+        transitions.getOrElse(from) { listOf() }.firstOrNull { it.on.contains(event) }
+            ?: transitions.getOrElse(null) { listOf() }
+                .firstOrNull { it.on.contains(event) && !it.exceptions.contains(from) }
 
     companion object {
         private const val TAG = "StateMachine"
@@ -264,7 +262,12 @@ class StateMachine<State : Any, Event : Any, SideEffect : Any, Context : Any> pr
          */
         fun <S : Any, E : Any, SE : Any, C : Any> build(
             name: String,
-            init: InitialStateScope<S, E, SE, C>
-        ) = StateMachine<S, E, SE, C>().initialize(name, init)
+            initialState: S,
+            builder: StateMachine<S, E, SE, C>.Builder.() -> StateMachine<S, E, SE, C>
+        ) = StateMachine<S, E, SE, C>(name, initialState).initialize(builder)
     }
 }
+
+@DslMarker
+annotation class BuilderDslMarker
+

@@ -2,7 +2,7 @@ import java.util.logging.Logger
 
 abstract class EventHandler<S : Any, E : Any, SE : Any, C : Any> {
     abstract fun validate(controller: StateMachine<S, E, SE, C>.Controller, context: C) : Result
-    abstract fun handle(controller: StateMachine<S, E, SE, C>.Controller, context: C)
+    abstract suspend fun handle(controller: StateMachine<S, E, SE, C>.Controller, context: C)
     abstract fun error(controller: StateMachine<S, E, SE, C>.Controller, context: C)
     abstract fun exception(controller: StateMachine<S, E, SE, C>.Controller, e: Exception, context: C)
 
@@ -11,7 +11,7 @@ abstract class EventHandler<S : Any, E : Any, SE : Any, C : Any> {
         object Invalid : Result()
     }
 
-    internal fun execute(scope: StateMachine<S, E, SE, C>.Controller, context: C){
+    internal suspend fun execute(scope: StateMachine<S, E, SE, C>.Controller, context: C){
         try {
             when(validate(scope, context)) {
                 is Result.Valid -> handle(scope, context)
@@ -28,14 +28,14 @@ abstract class EventHandler<S : Any, E : Any, SE : Any, C : Any> {
         private val logger = Logger.getLogger(this::class.simpleName)
 
         fun <S : Any, E : Any, SE : Any, C : Any> build(
-            handler: (StateMachine<S, E, SE, C>.Controller, C) -> Unit
+            handler: suspend (StateMachine<S, E, SE, C>.Controller, C) -> Unit
         ) = object : EventHandler<S, E, SE, C>() {
             override fun validate(
                 controller: StateMachine<S, E, SE, C>.Controller,
                 context: C
             ): Result = Result.Valid
 
-            override fun handle(
+            override suspend fun handle(
                 controller: StateMachine<S, E, SE, C>.Controller,
                 context: C
             ) {

@@ -1,4 +1,4 @@
-# Type safe configurable Finite State Machine
+# Async type-safe Finite State Machine
 
 This purpose of project is build a structure to be used as base to build Finite State 
 Machines that its configuration is made using type safe methods to ensure that no step
@@ -16,65 +16,89 @@ interface Event
 interface SideEffect
 
 sealed class MyStates {
-    object Initial : State
-    object State1 : State
-    object Final : State
+  object Initial : State
+  object State1: State
+  object Final: State
+
+  override fun toString() = this::class.simpleName ?: super.toString()
 }
 
 sealed class MyEvents {
-    object Event1 : Event
-    object Event2 : Event
+  object Start: Event
+  object Complete: Event
+
+  override fun toString() = this::class.simpleName ?: super.toString()
 }
 
 sealed class MySideEffects {
-    object Effect1 : SideEffect
-    object Effect2 : SideEffect
+  object FinishedStep1 : SideEffect
+  object Finished : SideEffect
+
+  override fun toString() = this::class.simpleName ?: super.toString()
+}
+```
+
+Create a context that runs across all state handlers executions
+
+```kotlin
+data class Context(
+  val one: Int,
+  val two: String,
+) {
+  var three: Long? = null
 }
 ```
 
 ### Create and start an FSM
 
 ```kotlin
-val stateMachine = StateMachine.build<State, Event, SideEffect>("test") {
-  initialState(MyStates.Initial) {
-    finalState(MyStates.Final) {
-      state(MyStates.Initial) {
-        on(MyEvents.Event1) {
-          execute {
-            logger.info("I am running before this transition is made")
-          }
+val stateMachine = StateMachine.build<State, Event, SideEffect, Context>(
+  "test",
+  MyStates.Initial
+) {
+  context {
+    Context(1, "Example")
+  }
 
-          transitTo(MyStates.State1, MySideEffects.Effect1, MyEvents.Event2)
-        }
+  from(MyStates.Initial) {
+    on(MyEvents.Start) {
+      execute { context ->
+        logger.info("I am running before this transition is made")
+
+        context.three = 10L
+
+        trigger(MyEvents.Complete)
       }
 
-      state(MyStates.State1) {
-        on(MyEvents.Event2) {
-          transitTo(MyStates.Final, MySideEffects.Effect2)
-        }
-      }
+      transitTo(MyStates.State1, MySideEffects.FinishedStep1)
+    }
+  }
 
-      onTransition { _, _, _, effect: SideEffect ->
-        when(effect) {
-          is MySideEffects.Effect1 -> { logger.info("Effect1 execution") }
-          is MySideEffects.Effect2 -> { logger.info("Effect2 execution") }
-        }
-      }
+  from(MyStates.State1) {
+    on(MyEvents.Complete) {
+      finishOn(MyStates.Final, MySideEffects.Finished)
+    }
+  }
+
+  onException { context, state, event, exception ->
+    logger.severe("Oops! Something went wrong during step $state on event $event...")
+    exception.printStackTrace()
+  }
+
+  onTransition { _, _, _, effect: SideEffect, _ ->
+    when(effect) {
+      is MySideEffects.FinishedStep1 -> { logger.info("Step 1 finished") }
+      is MySideEffects.Finished -> { logger.info("Did something before this machine finishes.") }
     }
   }
 }
 
-stateMachine.trigger(MyEvents.Event1)
+stateMachine.start(MyEvents.Event1)
 ```
 
 ## TODOs
 
-- Create abstract `EventHandlers` to handle determined events
-  - Might receive a generic typed object on handler start
-  - Must validate current state to ensure that an operation might be executed
-  - Must be able to fire different events from inside (passing events via `varargs`, maybe?)
-- Build a working test to show it's proof of concept
-- Build unit tests DSL and examples
+- Build unit tests of DSL and examples
 - Publish in Maven Central repository
 
 ## References

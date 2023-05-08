@@ -1,15 +1,25 @@
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.channels.ClosedReceiveChannelException
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.atomic.AtomicReference
 import java.util.logging.Logger
+
+typealias TransitionCallback<S, E, SE, C> = (current: S, on: E, target: S, sideEffect: SE, context: C) -> Unit
+typealias ExceptionCallback<C, S, E> = (context: C, state: S, on: E, exception: Exception) -> Unit
+typealias TransitionsMap<S, E, SE, C> = LinkedHashMap<S?, MutableList<StateMachine.Transition.Valid<S, E, SE, C>>>
+typealias StatesBuilder<S, E, SE, C> =
+        StateMachine<S, E, SE, C>.Builder.OnEventScope.() -> StateMachine.Transition.Valid<S, E, SE, C>
+typealias TransitionBuilder<S, E, SE, C> =
+        StateMachine<S, E, SE, C>.Builder.OnEventScope.TransitionScope.() -> StateMachine.Transition.Valid<S, E, SE, C>
+
+@DslMarker
+annotation class BuilderDslMarker
+
 /**
- * A type safe Finite State Machine that might be used to manage processes. The [S] type represents a super type
+ * An async type safe Finite State Machine that might be used to manage processes. The [S] type represents a super type
  * or an interface used to represent the states. All states must be inherited from [S]. The same goes to
- * [E] and [SE].
+ * [E] and [SE]. It also uses a context of type [C] across all event handlers.
  */
 @Suppress("UNUSED")
 class StateMachine<S : Any, E : Any, SE : Any, C : Any> private constructor(
@@ -17,19 +27,22 @@ class StateMachine<S : Any, E : Any, SE : Any, C : Any> private constructor(
     private val initialState: S
 ){
     private lateinit var context: C
-    private lateinit var onTransition: (S, E, S, SE, C) -> Unit
-    private var onException: (C, S, E, Exception) -> Unit = { _, _, _, _ -> }
+    private lateinit var onTransition: TransitionCallback<S, E, SE, C>
+    private var onException: ExceptionCallback<C, S, E> = { _, _, _, _ -> }
     private val currentStateRef: AtomicReference<S> = AtomicReference()
+    private var channel = Channel<E>(Channel.UNLIMITED)
+    private val consumer = EventConsumer(channel)
     private var running: Boolean = false
-    private var channel: Channel<E>? = null
     private val eventQueue: LinkedBlockingQueue<E> = LinkedBlockingQueue()
-    private val transitions: LinkedHashMap<S?, MutableList<Transition.Valid<S, E, SE, C>>> =
-        linkedMapOf()
+    private val transitions: TransitionsMap<S, E, SE, C> = linkedMapOf()
 
     init {
         currentStateRef.set(initialState)
     }
 
+    /**
+     * This class denotes what the FSM has to do when some transition is made.
+     */
     sealed class Action {
         object None : Action()
         object Finish : Action()
@@ -63,7 +76,7 @@ class StateMachine<S : Any, E : Any, SE : Any, C : Any> private constructor(
     }
 
     /**
-     * Scope used to build all states and a callback to when any transition is done.
+     * StateMachine type-safe builder.
      */
     @BuilderDslMarker
     open inner class Builder {
@@ -75,12 +88,12 @@ class StateMachine<S : Any, E : Any, SE : Any, C : Any> private constructor(
         @BuilderDslMarker
         inner class OnEventScope(private val exceptions: Set<S> = setOf()) {
             /**
-             * Stated that if the outer event is active, when any of the [events] is fired a callback might be executed, and
-             * some transition must be configured.
+             * States that if the outer event is active, when any of the [events] is fired a callback might be
+             * executed, and some transition must be configured.
              */
             fun on(
                 vararg events: E,
-                build: TransitionScope.() -> Transition.Valid<S, E, SE, C>
+                build: TransitionBuilder<S, E, SE, C>
             ): Transition.Valid<S, E, SE, C> {
                 return build(TransitionScope(events.toSet()))
             }
@@ -112,6 +125,10 @@ class StateMachine<S : Any, E : Any, SE : Any, C : Any> private constructor(
                 fun transitTo(to: S, effect: SE? = null): Transition.Valid<S, E, SE, C> =
                     Transition.Valid(this@OnEventScope.exceptions, on, handlers, to, effect)
 
+                /**
+                 * Sets up a state [to] as a final state. When the transition finishes the state machine will be
+                 * finished.
+                 */
                 fun finishOn(state: S, effect: SE? = null): Transition.Valid<S, E, SE, C> =
                     Transition.Valid(this@OnEventScope.exceptions, on, handlers, state, effect, Action.Finish)
             }
@@ -120,13 +137,16 @@ class StateMachine<S : Any, E : Any, SE : Any, C : Any> private constructor(
         /**
          * Adds the [states] to the FSM using the provided [build] scope to build the transitions in a type safe way.
          */
-        fun from(vararg states: S, build: OnEventScope.() -> Transition.Valid<S, E, SE, C>) {
+        fun from(vararg states: S, build: StatesBuilder<S, E, SE, C>) {
             states.forEach { state ->
                 transitions.getOrPut(state) { mutableListOf() }.add(build(OnEventScope()))
             }
         }
 
-        fun fromAll(vararg exceptions: S, builder: OnEventScope.() -> Transition.Valid<S, E, SE, C>) {
+        /**
+         * Adds a transition from any state, except the [exceptions] events.
+         */
+        fun fromAll(vararg exceptions: S, builder: StatesBuilder<S, E, SE, C>) {
             transitions.getOrPut(null) { mutableListOf() }.add(
                 builder(OnEventScope(exceptions.toSet()))
             )
@@ -135,15 +155,16 @@ class StateMachine<S : Any, E : Any, SE : Any, C : Any> private constructor(
         /**
          * Adds the [execute] callback when any valid transition is completed.
          */
-        fun onTransition(
-            execute: (S, E, S, SE, C) -> Unit
-        ): StateMachine<S, E, SE, C> {
+        fun onTransition(execute: TransitionCallback<S, E, SE, C>): StateMachine<S, E, SE, C> {
             onTransition = execute
 
             return this@StateMachine
         }
 
-        fun onException(handler: (C, S, E, Exception) -> Unit) {
+        /**
+         * An exception handler in case any exception is thrown during the event handler execution.
+         */
+        fun onException(handler: ExceptionCallback<C, S, E>) {
             onException = handler
         }
     }
@@ -155,8 +176,9 @@ class StateMachine<S : Any, E : Any, SE : Any, C : Any> private constructor(
         /**
          * Triggers an [event] inside the outer state machine.
          */
-        fun trigger(event: E) = runBlocking {
-            channel?.send(event)
+        fun trigger(event: E) {
+            logger.info("Enqueuing event $event...")
+            eventQueue.add(event)
         }
     }
 
@@ -170,26 +192,26 @@ class StateMachine<S : Any, E : Any, SE : Any, C : Any> private constructor(
     /**
      * Triggers the event [event] on the FSM.
      */
-    private fun trigger(event: E): Transition<S, E> = runBlocking {
+    private suspend fun trigger(event: E): Transition<S, E> =
         findTransition(currentStateRef.get(), event)?.let { transition ->
+            running = true
             logger.info("Event ${event::class.simpleName} fired!")
 
             logger.info("Running on event blocks...")
 
             transition.handlers.forEach { handler ->
-                logger.info("Calling handler ${handler::class.simpleName}")
+                logger.info("Start handler ${handler::class.simpleName ?: "anonymous"}")
 
                 try {
                     handler.execute(Controller(), context)
                 } catch (e: Exception) {
                     onException(context, currentStateRef.get(), event, e)
                 }
+
+                logger.info("Finishing handler ${handler::class.simpleName ?: "anonymous"}")
             }
 
-            logger.info(
-                "Transiting to ${currentStateRef.get()::class.simpleName} -> ${transition.to::class.simpleName}"
-            )
-
+            logger.info("Transiting to ${currentStateRef.get()} -> ${transition.to}")
             currentStateRef.set(transition.to)
 
             transition.effect?.let { sideEffect ->
@@ -199,42 +221,31 @@ class StateMachine<S : Any, E : Any, SE : Any, C : Any> private constructor(
             }
 
             if (transition.action is Action.Finish){
-                finish()
+                consumer.stop()
+            } else {
+                eventQueue.poll()?.let {
+                    logger.info("Sending event $it...")
+                    channel.send(it)
+                }
             }
 
+            running = false
             transition
         } ?: run {
-            logger.warning(
-                "No transition found for state ${currentStateRef.get()} on event $event"
-            )
+            logger.warning("No transition found for state ${currentStateRef.get()} on event $event")
 
             Transition.Invalid(currentStateRef.get(), event)
         }
-    }
 
     fun start(event: E) = runBlocking {
-        launch(Dispatchers.IO) {
-            running = true
-            channel.send(event)
-
-            try {
-                while(true) {
-                    val result = channel.tryReceive()
-
-                    if (result.isSuccess) {
-                        result.getOrNull()?.let { trigger(it) }
-                    }
-                }
-            } catch (e: ClosedReceiveChannelException) {
-                logger.warning("Channel closed to receive events!")
-            } catch (e: Exception) {
-                logger.warning("Something when wrong on channel...")
-                e.printStackTrace()
-            } finally {
-                logger.info("Machine stopped")
-                running = false
-            }
+        launch(coroutineContext) {
+            consumer.start(
+                onReceive = { trigger(it) },
+                onClose = { finish() }
+            )
         }
+
+        channel.send(event)
     }
 
     /**
@@ -243,6 +254,15 @@ class StateMachine<S : Any, E : Any, SE : Any, C : Any> private constructor(
     private fun finish() {
         logger.info("Finishing machine...")
         currentStateRef.set(initialState)
+        consumer.stop()
+    }
+
+    private fun reset(event: E) {
+        finish()
+        logger.info("Resetting state machine...")
+        channel = Channel(Channel.UNLIMITED)
+        consumer.reset(channel)
+        start(event)
     }
 
     /**
@@ -267,7 +287,3 @@ class StateMachine<S : Any, E : Any, SE : Any, C : Any> private constructor(
         ) = StateMachine<S, E, SE, C>(name, initialState).initialize(builder)
     }
 }
-
-@DslMarker
-annotation class BuilderDslMarker
-

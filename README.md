@@ -17,13 +17,13 @@ interface SideEffect
 
 sealed class MyStates {
     object Initial : State
-    object State1: State
-    object Final: State
+    object State1 : State
+    object Final : State
 }
 
 sealed class MyEvents {
-    object Event1: Event
-    object Event2: Event
+    object Event1 : Event
+    object Event2 : Event
 }
 
 sealed class MySideEffects {

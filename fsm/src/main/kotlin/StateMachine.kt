@@ -237,6 +237,9 @@ class StateMachine<S : Any, E : Any, SE : Any, C : Any> private constructor(
             Transition.Invalid(currentStateRef.get(), event)
         }
 
+    /**
+     * Starts the execution of the state machine.
+     */
     fun start(event: E) = runBlocking {
         launch(coroutineContext) {
             consumer.start(
@@ -257,6 +260,9 @@ class StateMachine<S : Any, E : Any, SE : Any, C : Any> private constructor(
         consumer.stop()
     }
 
+    /**
+     * Resets the state machine from beginning.
+     */
     private fun reset(event: E) {
         finish()
         logger.info("Resetting state machine...")

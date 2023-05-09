@@ -16,9 +16,6 @@ class EventHandlerTest {
 
     sealed class Event {
         object Start : Event()
-        object Complete : Event()
-        object Error : Event()
-        object Finished : Event()
     }
 
     sealed class SideEffect {

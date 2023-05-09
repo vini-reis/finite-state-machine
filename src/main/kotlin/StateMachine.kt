@@ -4,6 +4,8 @@ import kotlinx.coroutines.runBlocking
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.atomic.AtomicReference
 import java.util.logging.Logger
+import kotlin.contracts.ExperimentalContracts
+import kotlin.contracts.contract
 
 typealias TransitionCallback<S, E, SE, C> = (current: S, on: E, target: S, sideEffect: SE, context: C) -> Unit
 typealias ExceptionCallback<C, S, E> = (context: C, state: S, on: E, exception: Exception) -> Unit
@@ -80,7 +82,7 @@ class StateMachine<S : Any, E : Any, SE : Any, C : Any> private constructor(
      * StateMachine type-safe builder.
      */
     @BuilderDslMarker
-    open inner class Builder {
+    inner class Builder {
         /**
          * Scope used to build all transitions when determined event is fired when the outer state is active.
          */
@@ -136,7 +138,13 @@ class StateMachine<S : Any, E : Any, SE : Any, C : Any> private constructor(
         /**
          * Adds the [states] to the FSM using the provided [build] scope to build the transitions in a type safe way.
          */
+        @OptIn(ExperimentalContracts::class)
         fun from(vararg states: S, build: StatesBuilder<S, E, SE, C>) {
+            // TODO: Use contracts to ensure FSM has transitions and catches exceptions
+//            contract {
+//                returns() implies (this@StateMachine is HasTransition)
+//            }
+
             states.forEach { state ->
                 transitions.getOrPut(state) { mutableListOf() }.add(build(OnEventScope()))
             }

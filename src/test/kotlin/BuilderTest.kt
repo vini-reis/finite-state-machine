@@ -36,6 +36,13 @@ class BuilderTest {
         var three: Long? = null
     }
 
+    /**
+     * TODO: Create tests below:
+     *      - Should not build a FSM without final state in compilation time, preferably.
+     *      - Should not build a FSM with no transitions
+     *      - Should not build a FSM without handling exceptions
+     */
+
     @Test
     @DisplayName("Build and run a complete state machine")
     fun buildAndRun() {

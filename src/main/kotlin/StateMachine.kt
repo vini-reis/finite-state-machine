@@ -33,6 +33,7 @@ class StateMachine<S : Any, E : Any, SE : Any, C : Any> private constructor(
     private var channel = Channel<E>(Channel.UNLIMITED)
     private val consumer = EventConsumer(channel)
     private var running: Boolean = false
+    private var exceptionThrown = false
     private val eventQueue: LinkedBlockingQueue<E> = LinkedBlockingQueue()
     private val transitions: TransitionsMap<S, E, SE, C> = linkedMapOf()
 
@@ -80,8 +81,6 @@ class StateMachine<S : Any, E : Any, SE : Any, C : Any> private constructor(
      */
     @BuilderDslMarker
     open inner class Builder {
-        fun context(builder: () -> C) { context = builder() }
-
         /**
          * Scope used to build all transitions when determined event is fired when the outer state is active.
          */
@@ -109,7 +108,7 @@ class StateMachine<S : Any, E : Any, SE : Any, C : Any> private constructor(
                 /**
                  * Execute an anonymous [handler] after some transition is done.
                  */
-                fun execute(handler: Controller.(C) -> Unit) {
+                fun execute(handler: Controller.(C, S, E) -> Unit) {
                     handlers.add(EventHandler.build(handler))
                 }
 
@@ -122,7 +121,7 @@ class StateMachine<S : Any, E : Any, SE : Any, C : Any> private constructor(
                  * Sets up a state [to] to FSM go to after the callbacks are executed. The side effect [effect], if not null,
                  * will also be sent to [onTransition] callback.
                  */
-                fun transitTo(to: S, effect: SE? = null): Transition.Valid<S, E, SE, C> =
+                fun goTo(to: S, effect: SE? = null): Transition.Valid<S, E, SE, C> =
                     Transition.Valid(this@OnEventScope.exceptions, on, handlers, to, effect)
 
                 /**
@@ -155,10 +154,8 @@ class StateMachine<S : Any, E : Any, SE : Any, C : Any> private constructor(
         /**
          * Adds the [execute] callback when any valid transition is completed.
          */
-        fun onTransition(execute: TransitionCallback<S, E, SE, C>): StateMachine<S, E, SE, C> {
+        fun onTransition(execute: TransitionCallback<S, E, SE, C>) {
             onTransition = execute
-
-            return this@StateMachine
         }
 
         /**
@@ -167,6 +164,8 @@ class StateMachine<S : Any, E : Any, SE : Any, C : Any> private constructor(
         fun onException(handler: ExceptionCallback<C, S, E>) {
             onException = handler
         }
+
+        fun build(): StateMachine<S, E, SE, C> = this@StateMachine
     }
 
     /**
@@ -199,28 +198,35 @@ class StateMachine<S : Any, E : Any, SE : Any, C : Any> private constructor(
 
             logger.info("Running on event blocks...")
 
-            transition.handlers.forEach { handler ->
-                logger.info("Start handler ${handler::class.simpleName ?: "anonymous"}")
+            run handling@ {
+                transition.handlers.forEach { handler ->
+                    logger.info("Start handler ${handler::class.simpleName ?: "anonymous"}")
 
-                try {
-                    handler.execute(Controller(), context)
-                } catch (e: Exception) {
-                    onException(context, currentStateRef.get(), event, e)
+                    try {
+                        handler.execute(Controller(), context, currentStateRef.get(), event)
+                    } catch (e: Exception) {
+                        exceptionThrown = true
+                        onException(context, currentStateRef.get(), event, e)
+
+                        return@handling
+                    }
+
+                    logger.info("Finishing handler ${handler::class.simpleName ?: "anonymous"}")
                 }
-
-                logger.info("Finishing handler ${handler::class.simpleName ?: "anonymous"}")
             }
 
             transition.effect?.let { sideEffect ->
-            logger.info("Triggering side effect $sideEffect...")
-                onTransition(currentStateRef.get(), event, transition.to, sideEffect, context)
-                logger.info("Side effect ${transition.effect} finished!")
+                if (!exceptionThrown) {
+                    logger.info("Triggering side effect $sideEffect...")
+                    onTransition(currentStateRef.get(), event, transition.to, sideEffect, context)
+                    logger.info("Side effect ${transition.effect} finished!")
+                }
             }
 
             logger.info("Transiting to ${currentStateRef.get()} -> ${transition.to}")
             currentStateRef.set(transition.to)
 
-            if (transition.action is Action.Finish){
+            if (exceptionThrown || transition.action is Action.Finish){
                 consumer.stop()
             } else {
                 eventQueue.poll()?.let {
@@ -240,7 +246,10 @@ class StateMachine<S : Any, E : Any, SE : Any, C : Any> private constructor(
     /**
      * Starts the execution of the state machine.
      */
-    fun start(event: E) = runBlocking {
+    fun start(event: E, initialContext: C) = runBlocking {
+        context = initialContext
+        exceptionThrown = false
+
         launch(coroutineContext) {
             consumer.start(
                 onReceive = { trigger(it) },
@@ -263,12 +272,12 @@ class StateMachine<S : Any, E : Any, SE : Any, C : Any> private constructor(
     /**
      * Resets the state machine from beginning.
      */
-    private fun reset(event: E) {
+    fun reset(event: E, context: C) {
         finish()
         logger.info("Resetting state machine...")
         channel = Channel(Channel.UNLIMITED)
         consumer.reset(channel)
-        start(event)
+        start(event, context)
     }
 
     /**

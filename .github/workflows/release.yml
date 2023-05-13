@@ -39,7 +39,7 @@ jobs:
           ./gradlew publish \
           -PmavenUsername=${{ secrets.MAVEN_REPOSITORY_USERNAME }} \
           -PmavenPassword='${{ secrets.MAVEN_REPOSITORY_PASSWORD }}' \
-          -PsigningKey=${{ secrets.SIGNING_SECRET_KEY }} \
+          -PsigningKey='${{ secrets.SIGNING_SECRET_KEY }}' \
           -PsigningPassword=${{ secrets.SIGNING_PASSPHRASE }} \
           -Psnapshot
       - name: Publish release package
@@ -48,7 +48,7 @@ jobs:
           ./gradlew publish \
           -PmavenUsername=${{ secrets.MAVEN_REPOSITORY_USERNAME }} \
           -PmavenPassword='${{ secrets.MAVEN_REPOSITORY_PASSWORD }}' \
-          -PsigningKey=${{ secrets.SIGNING_SECRET_KEY }} \
+          -PsigningKey='${{ secrets.SIGNING_SECRET_KEY }}' \
           -PsigningPassword=${{ secrets.SIGNING_PASSPHRASE }}
       - name: Get version
         if: github.ref_name == 'main'

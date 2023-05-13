@@ -104,10 +104,11 @@ publishing {
     }
 }
 
-val signingKey = findProperty("signingKey").toString()
-val signingPassword = findProperty("signingPassword").toString()
-
 signing {
-    useInMemoryPgpKeys(signingKey, signingPassword)
+    val signingKeyId = findProperty("signingKeyId").toString()
+    val signingKey = findProperty("signingKey").toString()
+    val signingPassword = findProperty("signingPassword").toString()
+
+    useInMemoryPgpKeys(signingKeyId, signingKey, signingPassword)
     sign(publishing.publications["maven"])
 }

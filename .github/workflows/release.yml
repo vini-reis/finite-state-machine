@@ -1,9 +1,9 @@
 name: Publish package to the Maven Central Repository
 on:
   push:
-    branches: [ main ]
+    branches: [ main, develop ]
   pull_request:
-    branches: [ main ]
+    branches: [ main, develop ]
 jobs:
   test:
     name: Run tests
@@ -22,7 +22,7 @@ jobs:
   publish:
     name: Publish artifact
     runs-on: ubuntu-latest
-    if: github.ref_name == 'main'
+    if: contains(fromJSON('["main", "develop"]'), github.ref_name)
     needs: test
     steps:
       - name: Checkout
@@ -33,16 +33,30 @@ jobs:
           java-version: '17'
           distribution: 'zulu'
           cache: 'gradle'
-      - name: Publish package
+      - name: Publish snapshot package
+        if: github.ref_name == 'develop'
+        run: |
+          ./gradlew publish \
+            -PmavenUsername=${{ secrets.MAVEN_REPOSITORY_USERNAME }} \
+            -PmavenPassword=${{ secrets.MAVEN_REPOSITORY_PASSWORD }} \
+            -PsigningKey=${{ secrets.SIGNING_SECRET_KEY }} \
+            -PsigningPassword=${{ secrets.SIGNING_PASSPHRASE }} \
+            -Psnapshot
+      - name: Publish release package
+        if: github.ref_name == 'main'
         run: |
             ./gradlew publish \
               -PmavenUsername=${{ secrets.MAVEN_REPOSITORY_USERNAME }} \
               -PmavenPassword=${{ secrets.MAVEN_REPOSITORY_PASSWORD }} \
-              -PsigningKey=${{ secrets.SIGNING_SECRET_KEY }} \
+              -PsigningKeyId=${{ secrets.SIGNING_KEY_ID }}
+              -PsigningKey='${{ secrets.SIGNING_SECRET_KEY }}' \
               -PsigningPassword=${{ secrets.SIGNING_PASSPHRASE }}
       - name: Get version
+        if: github.ref_name == 'main'
         run: echo "package_version=`./gradlew -q getVersion`" >> "$GITHUB_ENV"
       - name: Tag repository
+        if: github.ref_name == 'main'
         run: git tag v${{ env.package_version }}
       - name: Push tag
+        if: github.ref_name == 'main'
         run: git push --tags

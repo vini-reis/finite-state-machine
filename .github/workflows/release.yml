@@ -39,7 +39,7 @@ jobs:
               -PmavenUsername=${{ secrets.MAVEN_REPOSITORY_USERNAME }} \
               -PmavenPassword=${{ secrets.MAVEN_REPOSITORY_PASSWORD }} \
               -PsigningKey=${{ secrets.SIGNING_SECRET_KEY }} \
-              -PsigningPassword=${{ secrets.SIGNING_SECRET_PASSPHRASE }}
+              -PsigningPassword=${{ secrets.SIGNING_PASSPHRASE }}
       - name: Get version
         run: echo "package_version=`./gradlew -q getVersion`" >> "$GITHUB_ENV"
       - name: Tag repository

@@ -103,8 +103,8 @@ stateMachine.start(MyEvents.Event1)
     - Must validate current state to ensure that an operation might be executed
     - Must be able to fire different events from inside (passing events via `varargs`, maybe?)
 - [X] Build unit tests of DSL and examples
-- [ ] Publish in Maven Central repository
-- [ ] Create GitHub deploy pipeline
+- [X] Publish in Maven Central repository
+- [X] Create GitHub deploy pipeline
 - [ ] Use contracts to ensure in compilation time that FSM are
   - not empty
   - not missing final states

@@ -43,14 +43,15 @@ tasks.javadoc {
     }
 }
 
-val mavenUrl: String = findProperty("mavenUrl").toString()
 val mavenUsername: String = findProperty("mavenUsername").toString()
 val mavenPassword: String = findProperty("mavenPassword").toString()
 
 publishing {
     repositories {
         maven {
-            url = uri(mavenUrl)
+            val repo = if(project.hasProperty("snapshot")) "snapshots" else "releases"
+
+            url = uri("https://s01.oss.sonatype.org/content/repositories/$repo/")
             credentials {
                 username = mavenUsername
                 password = mavenPassword
@@ -63,6 +64,10 @@ publishing {
             groupId = rootProject.group.toString()
             artifactId = "finite-state-machine-async-ktx"
             version = rootProject.version.toString()
+
+            if(project.hasProperty("snapshot"))
+                version += "-SNAPSHOT"
+
             from(components["java"])
 
             artifacts {

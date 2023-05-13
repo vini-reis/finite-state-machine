@@ -1,7 +1,5 @@
 name: Publish package to the Maven Central Repository
 on:
-  push:
-    branches: [ feature/maven-publish ] # TODO: Remove after tests
   pull_request:
     branches: [ main ]
 jobs:
@@ -19,15 +17,13 @@ jobs:
           cache: 'gradle'
       - name: Run tests
         run: ./gradlew test
-#        TODO: Uncomment after tests
-#      - name: Publish package
-#        run: |
-#            ./gradlew publish \
-#              -PmavenUrl=${{ secrets.MAVEN_REPOSITORY_URL }} \
-#              -PmavenUsername=${{ secrets.MAVEN_REPOSITORY_USERNAME }} \
-#              -PmavenPassword=${{ secrets.MAVEN_REPOSITORY_PASSWORD }} \
-#              -PsigningKey=${{ secrets.SIGNING_SECRET_KEY }} \
-#              -PsigningPassword=${{ secrets.SIGNING_SECRET_PASSPHRASE }}
+      - name: Publish package
+        run: |
+            ./gradlew publish \
+              -PmavenUsername=${{ secrets.MAVEN_REPOSITORY_USERNAME }} \
+              -PmavenPassword=${{ secrets.MAVEN_REPOSITORY_PASSWORD }} \
+              -PsigningKey=${{ secrets.SIGNING_SECRET_KEY }} \
+              -PsigningPassword=${{ secrets.SIGNING_SECRET_PASSPHRASE }}
       - name: Get version
         run: echo "package_version=`./gradlew -q getVersion`" >> "$GITHUB_ENV"
       - name: Tag repository

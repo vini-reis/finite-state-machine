@@ -24,6 +24,11 @@ jobs:
     runs-on: ubuntu-latest
     if: contains(fromJSON('["main", "develop"]'), github.ref_name)
     needs: test
+    env:
+      ORG_GRADLE_PROJECT_mavenUsername: ${{ secrets.MAVEN_REPOSITORY_USERNAME }}
+      ORG_GRADLE_PROJECT_mavenPassword: ${{ secrets.MAVEN_REPOSITORY_PASSWORD }}
+      ORG_GRADLE_PROJECT_signingKey: ${{ secrets.SIGNING_SECRET_KEY }}
+      ORG_GRADLE_PROJECT_signingPassword: ${{ secrets.SIGNING_PASSPHRASE }}
     steps:
       - name: Checkout
         uses: actions/checkout@v3
@@ -35,21 +40,10 @@ jobs:
           cache: 'gradle'
       - name: Publish snapshot package
         if: github.ref_name == 'develop'
-        run: |
-          ./gradlew publish \
-          -PmavenUsername=${{ secrets.MAVEN_REPOSITORY_USERNAME }} \
-          -PmavenPassword='${{ secrets.MAVEN_REPOSITORY_PASSWORD }}' \
-          -PsigningKey='${{ secrets.SIGNING_SECRET_KEY }}' \
-          -PsigningPassword=${{ secrets.SIGNING_PASSPHRASE }} \
-          -Psnapshot
+        run: ./gradlew publish -Psnapshot
       - name: Publish release package
         if: github.ref_name == 'main'
-        run: |
-          ./gradlew publish \
-          -PmavenUsername=${{ secrets.MAVEN_REPOSITORY_USERNAME }} \
-          -PmavenPassword='${{ secrets.MAVEN_REPOSITORY_PASSWORD }}' \
-          -PsigningKey='${{ secrets.SIGNING_SECRET_KEY }}' \
-          -PsigningPassword=${{ secrets.SIGNING_PASSPHRASE }}
+        run: ./gradlew publish
       - name: Get version
         if: github.ref_name == 'main'
         run: echo "package_version=`./gradlew -q getVersion`" >> "$GITHUB_ENV"

@@ -1,9 +1,9 @@
 name: Publish package to the Maven Central Repository
 on:
   push:
-    branches: [ main ]
+    branches: [ main, develop ]
   pull_request:
-    branches: [ main ]
+    branches: [ main, develop ]
 jobs:
   test:
     name: Run tests
@@ -22,8 +22,13 @@ jobs:
   publish:
     name: Publish artifact
     runs-on: ubuntu-latest
-    if: github.ref_name == 'main'
+    if: contains(fromJSON('["main", "develop"]'), github.ref_name)
     needs: test
+    env:
+      ORG_GRADLE_PROJECT_mavenUsername: ${{ secrets.MAVEN_REPOSITORY_USERNAME }}
+      ORG_GRADLE_PROJECT_mavenPassword: ${{ secrets.MAVEN_REPOSITORY_PASSWORD }}
+      ORG_GRADLE_PROJECT_signingKey: ${{ secrets.SIGNING_SECRET_KEY }}
+      ORG_GRADLE_PROJECT_signingPassword: ${{ secrets.SIGNING_PASSPHRASE }}
     steps:
       - name: Checkout
         uses: actions/checkout@v3
@@ -33,16 +38,18 @@ jobs:
           java-version: '17'
           distribution: 'zulu'
           cache: 'gradle'
-      - name: Publish package
-        run: |
-            ./gradlew publish \
-              -PmavenUsername=${{ secrets.MAVEN_REPOSITORY_USERNAME }} \
-              -PmavenPassword=${{ secrets.MAVEN_REPOSITORY_PASSWORD }} \
-              -PsigningKey=${{ secrets.SIGNING_SECRET_KEY }} \
-              -PsigningPassword=${{ secrets.SIGNING_PASSPHRASE }}
+      - name: Publish snapshot package
+        if: github.ref_name == 'develop'
+        run: ./gradlew publish -Psnapshot
+      - name: Publish release package
+        if: github.ref_name == 'main'
+        run: ./gradlew publish
       - name: Get version
+        if: github.ref_name == 'main'
         run: echo "package_version=`./gradlew -q getVersion`" >> "$GITHUB_ENV"
       - name: Tag repository
+        if: github.ref_name == 'main'
         run: git tag v${{ env.package_version }}
       - name: Push tag
+        if: github.ref_name == 'main'
         run: git push --tags

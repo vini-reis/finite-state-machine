@@ -37,20 +37,21 @@ jobs:
         if: github.ref_name == 'develop'
         run: |
           ./gradlew publish \
-            -PmavenUsername=${{ secrets.MAVEN_REPOSITORY_USERNAME }} \
-            -PmavenPassword=${{ secrets.MAVEN_REPOSITORY_PASSWORD }} \
-            -PsigningKey=${{ secrets.SIGNING_SECRET_KEY }} \
-            -PsigningPassword=${{ secrets.SIGNING_PASSPHRASE }} \
-            -Psnapshot
+          -PmavenUsername=${{ secrets.MAVEN_REPOSITORY_USERNAME }} \
+          -PmavenPassword=${{ secrets.MAVEN_REPOSITORY_PASSWORD }} \
+          -PsigningKeyId=${{ secrets.SIGNING_KEY_ID }}
+          -PsigningKey=${{ secrets.SIGNING_SECRET_KEY }} \
+          -PsigningPassword=${{ secrets.SIGNING_PASSPHRASE }} \
+          -Psnapshot
       - name: Publish release package
         if: github.ref_name == 'main'
         run: |
-            ./gradlew publish \
-              -PmavenUsername=${{ secrets.MAVEN_REPOSITORY_USERNAME }} \
-              -PmavenPassword=${{ secrets.MAVEN_REPOSITORY_PASSWORD }} \
-              -PsigningKeyId=${{ secrets.SIGNING_KEY_ID }}
-              -PsigningKey='${{ secrets.SIGNING_SECRET_KEY }}' \
-              -PsigningPassword=${{ secrets.SIGNING_PASSPHRASE }}
+          ./gradlew publish \
+          -PmavenUsername=${{ secrets.MAVEN_REPOSITORY_USERNAME }} \
+          -PmavenPassword=${{ secrets.MAVEN_REPOSITORY_PASSWORD }} \
+          -PsigningKeyId=${{ secrets.SIGNING_KEY_ID }}
+          -PsigningKey='${{ secrets.SIGNING_SECRET_KEY }}' \
+          -PsigningPassword=${{ secrets.SIGNING_PASSPHRASE }}
       - name: Get version
         if: github.ref_name == 'main'
         run: echo "package_version=`./gradlew -q getVersion`" >> "$GITHUB_ENV"

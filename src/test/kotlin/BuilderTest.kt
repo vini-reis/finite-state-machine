@@ -7,7 +7,6 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.Timeout
 import org.junit.jupiter.api.assertThrows
 import java.util.concurrent.TimeUnit
-import java.util.logging.Logger
 import kotlin.test.*
 
 @Timeout(30, unit = TimeUnit.SECONDS)

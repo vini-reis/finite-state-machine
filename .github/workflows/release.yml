@@ -1,5 +1,7 @@
 name: Publish package to the Maven Central Repository
 on:
+  push:
+    branches: [ feature/maven-publish ] # TODO: Remove after tests
   pull_request:
     branches: [ main ]
 jobs:
@@ -15,23 +17,24 @@ jobs:
           cache: 'gradle'
       - name: Run tests
         run: ./gradlew test
-      - name: Publish package
-        run: |
-            ./gradlew publish \
-              -PmavenUrl=${{ secrets.MAVEN_REPOSITORY_URL }} \
-              -PmavenUsername=${{ secrets.MAVEN_REPOSITORY_USERNAME }} \
-              -PmavenPassword=${{ secrets.MAVEN_REPOSITORY_PASSWORD }} \
-              -PsigningKey=${{ secrets.SIGNING_SECRET_KEY }} \
-              -PsigningPassword=${{ secrets.SIGNING_SECRET_PASSPHRASE }}
+#        TODO: Uncomment after tests
+#      - name: Publish package
+#        run: |
+#            ./gradlew publish \
+#              -PmavenUrl=${{ secrets.MAVEN_REPOSITORY_URL }} \
+#              -PmavenUsername=${{ secrets.MAVEN_REPOSITORY_USERNAME }} \
+#              -PmavenPassword=${{ secrets.MAVEN_REPOSITORY_PASSWORD }} \
+#              -PsigningKey=${{ secrets.SIGNING_SECRET_KEY }} \
+#              -PsigningPassword=${{ secrets.SIGNING_SECRET_PASSPHRASE }}
       - name: Get version
         run: echo "package_version=`./gradlew -q getVersion`" >> "$GITHUB_ENV"
       - name: Create tag
         uses: actions/github-script@v5
-        with:
+        with: # TODO: Remove SNAPSHOT after tests
          script: |
            github.rest.git.createRef({
              owner: context.repo.owner,
              repo: context.repo.repo,
-             ref: 'refs/tags/${{ env.package_version }}',
+             ref: 'refs/tags/${{ env.package_version }}-SNAPSHOT', 
              sha: context.sha
            })

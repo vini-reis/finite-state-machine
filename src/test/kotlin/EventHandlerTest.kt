@@ -1,3 +1,4 @@
+import model.*
 import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.Timeout
@@ -9,40 +10,19 @@ import kotlin.test.fail
 
 @Timeout(30, unit = TimeUnit.SECONDS)
 class EventHandlerTest {
-    sealed class State {
-        object Initial : State()
-        object Final : State()
-    }
-
-    sealed class Event {
-        object Start : Event()
-    }
-
-    sealed class SideEffect {
-        object Finished : SideEffect()
-    }
-
-    data class Context<T, E>(
-        var result: T? = null,
-        var error: E? = null,
-        var exception: Exception? = null
-    )
-
-    data class Error(val code: Int)
-
     private class ValidEventHandler(
-        private val handler: StateMachine<State, Event, SideEffect, Context<Int, Error>>.Controller.(Context<Int, Error>, State, Event) -> Unit
-    ) : EventHandler<State, Event, SideEffect, Context<Int, Error>>() {
+        private val handler: StateMachine<State, Event, SideEffect, Context2<Int, Error>>.Controller.(Context2<Int, Error>, State, Event) -> Unit
+    ) : EventHandler<State, Event, SideEffect, Context2<Int, Error>>() {
         override fun validate(
-            controller: StateMachine<State, Event, SideEffect, Context<Int, Error>>.Controller,
-            context: Context<Int, Error>,
+            controller: StateMachine<State, Event, SideEffect, Context2<Int, Error>>.Controller,
+            context: Context2<Int, Error>,
             state: State,
             event: Event
         ): Result = Result.Valid
 
         override suspend fun handle(
-            controller: StateMachine<State, Event, SideEffect, Context<Int, Error>>.Controller,
-            context: Context<Int, Error>,
+            controller: StateMachine<State, Event, SideEffect, Context2<Int, Error>>.Controller,
+            context: Context2<Int, Error>,
             state: State,
             event: Event
         ) {
@@ -50,8 +30,8 @@ class EventHandlerTest {
         }
 
         override fun error(
-            controller: StateMachine<State, Event, SideEffect, Context<Int, Error>>.Controller,
-            context: Context<Int, Error>,
+            controller: StateMachine<State, Event, SideEffect, Context2<Int, Error>>.Controller,
+            context: Context2<Int, Error>,
             state: State,
             event: Event
         ) {
@@ -59,33 +39,33 @@ class EventHandlerTest {
         }
 
         override fun exception(
-            controller: StateMachine<State, Event, SideEffect, Context<Int, Error>>.Controller,
+            controller: StateMachine<State, Event, SideEffect, Context2<Int, Error>>.Controller,
             e: Exception,
-            context: Context<Int, Error>
+            context: Context2<Int, Error>
         ) {
             fail("This event handler shall not throw exceptions", e)
         }
 
         companion object {
             fun build(
-                handler: StateMachine<State, Event, SideEffect, Context<Int, Error>>.Controller.(Context<Int, Error>, State, Event) -> Unit
+                handler: StateMachine<State, Event, SideEffect, Context2<Int, Error>>.Controller.(Context2<Int, Error>, State, Event) -> Unit
             ) = ValidEventHandler(handler)
         }
     }
 
     private class ExceptionEventHandler(
         private val exception: Exception
-    ) : EventHandler<State, Event, SideEffect, Context<Int, Error>>() {
+    ) : EventHandler<State, Event, SideEffect, Context2<Int, Error>>() {
         override fun validate(
-            controller: StateMachine<State, Event, SideEffect, Context<Int, Error>>.Controller,
-            context: Context<Int, Error>,
+            controller: StateMachine<State, Event, SideEffect, Context2<Int, Error>>.Controller,
+            context: Context2<Int, Error>,
             state: State,
             event: Event
         ): Result = Result.Valid
 
         override suspend fun handle(
-            controller: StateMachine<State, Event, SideEffect, Context<Int, Error>>.Controller,
-            context: Context<Int, Error>,
+            controller: StateMachine<State, Event, SideEffect, Context2<Int, Error>>.Controller,
+            context: Context2<Int, Error>,
             state: State,
             event: Event
         ) {
@@ -93,8 +73,8 @@ class EventHandlerTest {
         }
 
         override fun error(
-            controller: StateMachine<State, Event, SideEffect, Context<Int, Error>>.Controller,
-            context: Context<Int, Error>,
+            controller: StateMachine<State, Event, SideEffect, Context2<Int, Error>>.Controller,
+            context: Context2<Int, Error>,
             state: State,
             event: Event
         ) {
@@ -102,9 +82,9 @@ class EventHandlerTest {
         }
 
         override fun exception(
-            controller: StateMachine<State, Event, SideEffect, Context<Int, Error>>.Controller,
+            controller: StateMachine<State, Event, SideEffect, Context2<Int, Error>>.Controller,
             e: Exception,
-            context: Context<Int, Error>
+            context: Context2<Int, Error>
         ) {
             context.exception = e
         }
@@ -116,17 +96,17 @@ class EventHandlerTest {
 
     private class InvalidEventHandler(
         private val errorCode: Int
-    ) : EventHandler<State, Event, SideEffect, Context<Int, Error>>() {
+    ) : EventHandler<State, Event, SideEffect, Context2<Int, Error>>() {
         override fun validate(
-            controller: StateMachine<State, Event, SideEffect, Context<Int, Error>>.Controller,
-            context: Context<Int, Error>,
+            controller: StateMachine<State, Event, SideEffect, Context2<Int, Error>>.Controller,
+            context: Context2<Int, Error>,
             state: State,
             event: Event
         ): Result = Result.Invalid
 
         override suspend fun handle(
-            controller: StateMachine<State, Event, SideEffect, Context<Int, Error>>.Controller,
-            context: Context<Int, Error>,
+            controller: StateMachine<State, Event, SideEffect, Context2<Int, Error>>.Controller,
+            context: Context2<Int, Error>,
             state: State,
             event: Event
         ) {
@@ -134,8 +114,8 @@ class EventHandlerTest {
         }
 
         override fun error(
-            controller: StateMachine<State, Event, SideEffect, Context<Int, Error>>.Controller,
-            context: Context<Int, Error>,
+            controller: StateMachine<State, Event, SideEffect, Context2<Int, Error>>.Controller,
+            context: Context2<Int, Error>,
             state: State,
             event: Event
         ) {
@@ -143,9 +123,9 @@ class EventHandlerTest {
         }
 
         override fun exception(
-            controller: StateMachine<State, Event, SideEffect, Context<Int, Error>>.Controller,
+            controller: StateMachine<State, Event, SideEffect, Context2<Int, Error>>.Controller,
             e: Exception,
-            context: Context<Int, Error>
+            context: Context2<Int, Error>
         ) {
             fail("This event handler should not throw exceptions", e)
         }
@@ -193,13 +173,13 @@ class EventHandlerTest {
     companion object {
         private const val TAG = "EventHandlerTest"
 
-        private fun buildInitialContext() = Context<Int, Error>()
+        private fun buildInitialContext() = Context2<Int, Error>()
 
         private fun buildUnitFsm(
-            handler: EventHandler<State, Event, SideEffect, Context<Int, Error>>,
-            onFinish: (Context<Int, Error>) -> Unit
+            handler: EventHandler<State, Event, SideEffect, Context2<Int, Error>>,
+            onFinish: (Context2<Int, Error>) -> Unit
         ) =
-            StateMachine.build<State, Event, SideEffect, Context<Int, Error>>(TAG, State.Initial) {
+            StateMachine.build<State, Event, SideEffect, Context2<Int, Error>>(TAG, State.Initial) {
                 from(State.Initial) {
                     on(Event.Start) {
                         execute(handler)
@@ -211,6 +191,7 @@ class EventHandlerTest {
                 onTransition { _, _, _, sideEffect, context ->
                     when(sideEffect) {
                         SideEffect.Finished -> onFinish(context)
+                        else -> fail("Should not run other side effects")
                     }
                 }
 

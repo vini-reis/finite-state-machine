@@ -31,15 +31,21 @@ java {
     withSourcesJar()
 }
 
+task("getVersion") {
+    doLast {
+        println(project.version)
+    }
+}
+
 tasks.javadoc {
     if (JavaVersion.current().isJava9Compatible) {
         (options as StandardJavadocDocletOptions).addBooleanOption("html5", true)
     }
 }
 
-val mavenUrl: String = properties["url"].toString()
-val mavenUsername: String = properties["username"].toString()
-val mavenPassword: String = properties["password"].toString()
+val mavenUrl: String = findProperty("mavenUrl").toString()
+val mavenUsername: String = findProperty("mavenUsername").toString()
+val mavenPassword: String = findProperty("mavenPassword").toString()
 
 publishing {
     repositories {
@@ -93,6 +99,10 @@ publishing {
     }
 }
 
+val signingKey = findProperty("signingKey").toString()
+val signingPassword = findProperty("signingPassword").toString()
+
 signing {
+    useInMemoryPgpKeys(signingKey, signingPassword)
     sign(publishing.publications["maven"])
 }

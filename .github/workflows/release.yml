@@ -22,7 +22,7 @@ jobs:
   publish:
     name: Publish artifact
     runs-on: ubuntu-latest
-    if: contains([ 'main', 'develop' ], github.ref_name)
+    if: contains(fromJSON('["main", "develop"]'), github.ref_name)
     needs: test
     steps:
       - name: Checkout

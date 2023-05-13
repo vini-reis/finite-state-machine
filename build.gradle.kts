@@ -105,10 +105,10 @@ publishing {
 }
 
 signing {
-    val signingKeyId = findProperty("signingKeyId").toString()
     val signingKey = findProperty("signingKey").toString()
     val signingPassword = findProperty("signingPassword").toString()
 
-    useInMemoryPgpKeys(signingKeyId, signingKey, signingPassword)
+    useGpgCmd()
+    useInMemoryPgpKeys(signingKey, signingPassword)
     sign(publishing.publications["maven"])
 }

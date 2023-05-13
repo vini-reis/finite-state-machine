@@ -39,7 +39,6 @@ jobs:
           ./gradlew publish \
           -PmavenUsername=${{ secrets.MAVEN_REPOSITORY_USERNAME }} \
           -PmavenPassword='${{ secrets.MAVEN_REPOSITORY_PASSWORD }}' \
-          -PsigningKeyId=${{ secrets.SIGNING_KEY_ID }} \
           -PsigningKey=${{ secrets.SIGNING_SECRET_KEY }} \
           -PsigningPassword=${{ secrets.SIGNING_PASSPHRASE }} \
           -Psnapshot
@@ -49,7 +48,6 @@ jobs:
           ./gradlew publish \
           -PmavenUsername=${{ secrets.MAVEN_REPOSITORY_USERNAME }} \
           -PmavenPassword='${{ secrets.MAVEN_REPOSITORY_PASSWORD }}' \
-          -PsigningKeyId=${{ secrets.SIGNING_KEY_ID }} \
           -PsigningKey=${{ secrets.SIGNING_SECRET_KEY }} \
           -PsigningPassword=${{ secrets.SIGNING_PASSPHRASE }}
       - name: Get version

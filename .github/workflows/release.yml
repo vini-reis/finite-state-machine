@@ -38,8 +38,8 @@ jobs:
         run: |
           ./gradlew publish \
           -PmavenUsername=${{ secrets.MAVEN_REPOSITORY_USERNAME }} \
-          -PmavenPassword=${{ secrets.MAVEN_REPOSITORY_PASSWORD }} \
-          -PsigningKeyId=${{ secrets.SIGNING_KEY_ID }}
+          -PmavenPassword='${{ secrets.MAVEN_REPOSITORY_PASSWORD }}' \
+          -PsigningKeyId=${{ secrets.SIGNING_KEY_ID }} \
           -PsigningKey=${{ secrets.SIGNING_SECRET_KEY }} \
           -PsigningPassword=${{ secrets.SIGNING_PASSPHRASE }} \
           -Psnapshot
@@ -48,9 +48,9 @@ jobs:
         run: |
           ./gradlew publish \
           -PmavenUsername=${{ secrets.MAVEN_REPOSITORY_USERNAME }} \
-          -PmavenPassword=${{ secrets.MAVEN_REPOSITORY_PASSWORD }} \
-          -PsigningKeyId=${{ secrets.SIGNING_KEY_ID }}
-          -PsigningKey='${{ secrets.SIGNING_SECRET_KEY }}' \
+          -PmavenPassword='${{ secrets.MAVEN_REPOSITORY_PASSWORD }}' \
+          -PsigningKeyId=${{ secrets.SIGNING_KEY_ID }} \
+          -PsigningKey=${{ secrets.SIGNING_SECRET_KEY }} \
           -PsigningPassword=${{ secrets.SIGNING_PASSPHRASE }}
       - name: Get version
         if: github.ref_name == 'main'

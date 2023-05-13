@@ -3,17 +3,17 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.atomic.AtomicReference
+import java.util.logging.Level
 import java.util.logging.Logger
 import kotlin.contracts.ExperimentalContracts
-import kotlin.contracts.contract
 
 typealias TransitionCallback<S, E, SE, C> = (current: S, on: E, target: S, sideEffect: SE, context: C) -> Unit
 typealias ExceptionCallback<C, S, E> = (context: C, state: S, on: E, exception: Exception) -> Unit
-typealias TransitionsMap<S, E, SE, C> = LinkedHashMap<S?, MutableList<StateMachine.Transition.Valid<S, E, SE, C>>>
+typealias TransitionsMap<S, E, SE, C> = LinkedHashMap<S?, MutableList<StateMachine.Transition<S, E, SE, C>>>
 typealias StatesBuilder<S, E, SE, C> =
-        StateMachine<S, E, SE, C>.Builder.OnEventScope.() -> StateMachine.Transition.Valid<S, E, SE, C>
+        StateMachine<S, E, SE, C>.Builder.OnEventScope.() -> StateMachine.Transition<S, E, SE, C>
 typealias TransitionBuilder<S, E, SE, C> =
-        StateMachine<S, E, SE, C>.Builder.OnEventScope.TransitionScope.() -> StateMachine.Transition.Valid<S, E, SE, C>
+        StateMachine<S, E, SE, C>.Builder.OnEventScope.TransitionScope.() -> StateMachine.Transition<S, E, SE, C>
 
 @DslMarker
 annotation class BuilderDslMarker
@@ -30,7 +30,6 @@ class StateMachine<S : Any, E : Any, SE : Any, C : Any> private constructor(
 ){
     private lateinit var context: C
     private lateinit var onTransition: TransitionCallback<S, E, SE, C>
-    private var onException: ExceptionCallback<C, S, E> = { _, _, _, _ -> }
     private val currentStateRef: AtomicReference<S> = AtomicReference()
     private var channel = Channel<E>(Channel.UNLIMITED)
     private val consumer = EventConsumer(channel)
@@ -38,6 +37,13 @@ class StateMachine<S : Any, E : Any, SE : Any, C : Any> private constructor(
     private var exceptionThrown = false
     private val eventQueue: LinkedBlockingQueue<E> = LinkedBlockingQueue()
     private val transitions: TransitionsMap<S, E, SE, C> = linkedMapOf()
+    private var onException: ExceptionCallback<C, S, E> = { _, _, _, exception ->
+        logger.log(Level.SEVERE, "State machine $name failed with no exception handlers", exception)
+    }
+    private val hasFinalState: Boolean
+        get() = transitions.any { entry ->
+            entry.value.any { transition -> transition.action == Action.Finish }
+        }
 
     init {
         currentStateRef.set(initialState)
@@ -54,29 +60,14 @@ class StateMachine<S : Any, E : Any, SE : Any, C : Any> private constructor(
     /**
      * Object that maps the transitions on FSM
      */
-    sealed class Transition<S : Any, E : Any> {
-        /**
-         * Valid transition that will change the FSM from current State on event [on] to [to] state
-         * and trigger a side effect [effect]. All those parameters will be passed to [onTransition] callback.
-         */
-        data class Valid<S : Any, E : Any, SE : Any, C : Any>(
-            val exceptions: Set<S> = setOf(),
-            val on: Set<E>,
-            val handlers: List<EventHandler<S, E, SE, C>> = listOf(),
-            val to: S,
-            val effect: SE? = null,
-            val action: Action = Action.None
-        ) : Transition<S, E>()
-
-        /**
-         * An invalid transition indicates that from state [from] when event [on] is fired, there's no state to go
-         * or side effect to trigger.
-         */
-        data class Invalid<S : Any, E : Any>(
-            val from: S,
-            val on: E,
-        ) : Transition<S, E>()
-    }
+    data class Transition<S : Any, E : Any, SE : Any, C : Any>(
+        val exceptions: Set<S> = setOf(),
+        val on: Set<E>,
+        val handlers: List<EventHandler<S, E, SE, C>> = listOf(),
+        val to: S,
+        val effect: SE? = null,
+        val action: Action = Action.None
+    )
 
     /**
      * StateMachine type-safe builder.
@@ -95,7 +86,7 @@ class StateMachine<S : Any, E : Any, SE : Any, C : Any> private constructor(
             fun on(
                 vararg events: E,
                 build: TransitionBuilder<S, E, SE, C>
-            ): Transition.Valid<S, E, SE, C> {
+            ): Transition<S, E, SE, C> {
                 return build(TransitionScope(events.toSet()))
             }
 
@@ -123,28 +114,22 @@ class StateMachine<S : Any, E : Any, SE : Any, C : Any> private constructor(
                  * Sets up a state [to] to FSM go to after the callbacks are executed. The side effect [effect], if not null,
                  * will also be sent to [onTransition] callback.
                  */
-                fun goTo(to: S, effect: SE? = null): Transition.Valid<S, E, SE, C> =
-                    Transition.Valid(this@OnEventScope.exceptions, on, handlers, to, effect)
+                fun goTo(to: S, effect: SE? = null): Transition<S, E, SE, C> =
+                    Transition(this@OnEventScope.exceptions, on, handlers, to, effect)
 
                 /**
                  * Sets up a state [to] as a final state. When the transition finishes the state machine will be
                  * finished.
                  */
-                fun finishOn(state: S, effect: SE? = null): Transition.Valid<S, E, SE, C> =
-                    Transition.Valid(this@OnEventScope.exceptions, on, handlers, state, effect, Action.Finish)
+                fun finishOn(state: S, effect: SE? = null): Transition<S, E, SE, C> =
+                    Transition(this@OnEventScope.exceptions, on, handlers, state, effect, Action.Finish)
             }
         }
 
         /**
          * Adds the [states] to the FSM using the provided [build] scope to build the transitions in a type safe way.
          */
-        @OptIn(ExperimentalContracts::class)
         fun from(vararg states: S, build: StatesBuilder<S, E, SE, C>) {
-            // TODO: Use contracts to ensure FSM has transitions and catches exceptions
-//            contract {
-//                returns() implies (this@StateMachine is HasTransition)
-//            }
-
             states.forEach { state ->
                 transitions.getOrPut(state) { mutableListOf() }.add(build(OnEventScope()))
             }
@@ -173,7 +158,15 @@ class StateMachine<S : Any, E : Any, SE : Any, C : Any> private constructor(
             onException = handler
         }
 
-        fun build(): StateMachine<S, E, SE, C> = this@StateMachine
+        /**
+         * Finishes DSL build method and returns the build machine ensuring it's not empty.
+         */
+        fun build(): StateMachine<S, E, SE, C> {
+            if(transitions.isEmpty()) throw IllegalArgumentException("No transitions found for FSM $name")
+            if(!hasFinalState) throw IllegalStateException("No final state found for FSM $name")
+
+            return this@StateMachine
+        }
     }
 
     /**
@@ -199,7 +192,7 @@ class StateMachine<S : Any, E : Any, SE : Any, C : Any> private constructor(
     /**
      * Triggers the event [event] on the FSM.
      */
-    private suspend fun trigger(event: E): Transition<S, E> =
+    private suspend fun trigger(event: E) =
         findTransition(currentStateRef.get(), event)?.let { transition ->
             running = true
             logger.info("Event ${event::class.simpleName} fired!")
@@ -244,11 +237,8 @@ class StateMachine<S : Any, E : Any, SE : Any, C : Any> private constructor(
             }
 
             running = false
-            transition
         } ?: run {
             logger.warning("No transition found for state ${currentStateRef.get()} on event $event")
-
-            Transition.Invalid(currentStateRef.get(), event)
         }
 
     /**
@@ -291,7 +281,7 @@ class StateMachine<S : Any, E : Any, SE : Any, C : Any> private constructor(
     /**
      * Looks for a transition with a current event [from] when the event [event] is triggered.
      */
-    private fun findTransition(from: S, event: E): Transition.Valid<S, E, SE, C>? =
+    private fun findTransition(from: S, event: E): Transition<S, E, SE, C>? =
         transitions.getOrElse(from) { listOf() }.firstOrNull { it.on.contains(event) }
             ?: transitions.getOrElse(null) { listOf() }
                 .firstOrNull { it.on.contains(event) && !it.exceptions.contains(from) }

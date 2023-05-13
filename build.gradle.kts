@@ -1,5 +1,7 @@
 plugins {
     kotlin("jvm") version "1.8.21"
+    `maven-publish`
+    signing
 }
 
 group = "io.github.vinicreis"
@@ -22,4 +24,75 @@ tasks.test {
 
 kotlin {
     jvmToolchain(17)
+}
+
+java {
+    withJavadocJar()
+    withSourcesJar()
+}
+
+tasks.javadoc {
+    if (JavaVersion.current().isJava9Compatible) {
+        (options as StandardJavadocDocletOptions).addBooleanOption("html5", true)
+    }
+}
+
+val mavenUrl: String = properties["url"].toString()
+val mavenUsername: String = properties["username"].toString()
+val mavenPassword: String = properties["password"].toString()
+
+publishing {
+    repositories {
+        maven {
+            url = uri(mavenUrl)
+            credentials {
+                username = mavenUsername
+                password = mavenPassword
+            }
+        }
+    }
+
+    publications {
+        create<MavenPublication>("maven") {
+            groupId = rootProject.group.toString()
+            artifactId = "finite-state-machine-async-ktx"
+            version = rootProject.version.toString()
+            from(components["java"])
+
+            artifacts {
+                archives(tasks["sourcesJar"])
+            }
+
+            pom {
+                name.set("Kotlin Async Finite State Machine")
+                description.set("A state machine design pattern implementation to run async FSMs in Kotlin")
+                url.set("https://github.com/vinicreis/finite-state-machine")
+
+                licenses {
+                    license {
+                        name.set("GNU General Public License v3.0")
+                        url.set("https://www.gnu.org/licenses/gpl-3.0.en.html")
+                    }
+                }
+
+                developers {
+                    developer {
+                        id.set("vinicreis")
+                        name.set("Vinícius Reis")
+                        email.set("vnc.reis@outlook.com")
+                    }
+                }
+
+                scm {
+                    connection.set("git@github.com:vinicreis/finite-state-machine.git")
+                    developerConnection.set("git@github.com:vinicreis/finite-state-machine.git")
+                    url.set("https://github.com/vinicreis/finite-state-machine.git")
+                }
+            }
+        }
+    }
+}
+
+signing {
+    sign(publishing.publications["maven"])
 }

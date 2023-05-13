@@ -23,6 +23,7 @@ jobs:
     name: Publish artifact
     runs-on: ubuntu-latest
     if: github.ref_name == 'main'
+    needs: test
     steps:
       - name: Publish package
         run: |

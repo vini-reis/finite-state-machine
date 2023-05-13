@@ -1,10 +1,12 @@
 name: Publish package to the Maven Central Repository
 on:
+  push:
+    branches: [ main ]
   pull_request:
     branches: [ main ]
 jobs:
-  publish:
-    name: Publish artifact
+  test:
+    name: Run tests
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -17,6 +19,11 @@ jobs:
           cache: 'gradle'
       - name: Run tests
         run: ./gradlew test
+  publish:
+    name: Publish artifact
+    runs-on: ubuntu-latest
+    if: github.ref_name == 'main'
+    steps:
       - name: Publish package
         run: |
             ./gradlew publish \

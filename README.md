@@ -105,6 +105,7 @@ stateMachine.start(MyEvents.Event1)
 - [X] Build unit tests of DSL and examples
 - [X] Publish in Maven Central repository
 - [X] Create GitHub deploy pipeline
+- [ ] Add publication on snapshot repo on `develop` branch
 - [ ] Use contracts to ensure in compilation time that FSM are
   - not empty
   - not missing final states
